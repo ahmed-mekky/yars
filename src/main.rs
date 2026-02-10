@@ -48,6 +48,8 @@ enum RespTypes {
     SimpleString(String),
     Error(String),
     Integer(i64),
+    BulkString(String),
+    Array(Vec<RespTypes>),
 }
 
 impl std::fmt::Debug for RespTypes {
@@ -56,6 +58,14 @@ impl std::fmt::Debug for RespTypes {
             Self::SimpleString(s) => write!(f, "SimpleString({})", s),
             Self::Error(e) => write!(f, "Error({})", e),
             Self::Integer(i) => write!(f, "Integer({})", i),
+            Self::BulkString(s) => write!(f, "BulkString({})", s),
+            Self::Array(a) => {
+                f.write_str("Array(")?;
+                for item in a.iter() {
+                    write!(f, "{:?}", item)?;
+                }
+                f.write_str(")")
+            }
         }
     }
 }
@@ -93,6 +103,21 @@ impl RespTypes {
                     .map_err(|_| "Invalid UTF-8 encoding")?
                     .to_string(),
             )),
+            b'$' => {
+                let len: i32 = str::from_utf8(&buf[1..cr_pos])
+                    .map_err(|_| "Invalid UTF-8 encoding")?
+                    .parse()
+                    .map_err(|_| "Invalid integer format")?;
+                if len >= 1 {
+                    Ok(RespTypes::BulkString(
+                        str::from_utf8(&buf[cr_pos + 2..len as usize + cr_pos + 2])
+                            .map_err(|_| "Invalid UTF-8 encoding")?
+                            .to_string(),
+                    ))
+                } else {
+                    Ok(RespTypes::BulkString("".to_string()))
+                }
+            }
             _ => Err("Unknown RESP type"),
         }
     }
