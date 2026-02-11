@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use btoi::btoi;
 use nom::{
     IResult, Parser,
     bytes::{tag, take_until},
@@ -101,25 +102,23 @@ impl RespTypes {
     }
 
     fn parse_simple_string(buf: &[u8]) -> Result<Self> {
-        let string = str::from_utf8(Self::parse_raw_buffer(buf, '+')?.1)
-            .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
-            .to_string();
-        Ok(Self::SimpleString(string))
+        Ok(Self::SimpleString(
+            str::from_utf8(Self::parse_raw_buffer(buf, '+')?.1)
+                .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+                .to_string(),
+        ))
     }
 
     fn parse_integer(buf: &[u8]) -> Result<Self> {
-        let integer = str::from_utf8(Self::parse_raw_buffer(buf, ':')?.1)
-            .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
-            .parse()
-            .map_err(|e| anyhow!("Invalid integer format: {}", e))?;
-        Ok(Self::Integer(integer))
+        Ok(Self::Integer(btoi(Self::parse_raw_buffer(buf, ':')?.1)?))
     }
 
     fn parse_error(buf: &[u8]) -> Result<Self> {
-        let error = str::from_utf8(Self::parse_raw_buffer(buf, '-')?.1)
-            .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
-            .to_string();
-        Ok(Self::Error(error))
+        Ok(Self::Error(
+            str::from_utf8(Self::parse_raw_buffer(buf, '-')?.1)
+                .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+                .to_string(),
+        ))
     }
 }
 
