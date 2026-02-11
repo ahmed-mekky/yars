@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.101"
+nom = "8.0.0"
 tokio = { version = "1.49.0", features = ["full"] }

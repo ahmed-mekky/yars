@@ -1,10 +1,19 @@
+use anyhow::{Result, anyhow};
+use nom::{
+    IResult, Parser,
+    bytes::{tag, take_until},
+    character::char,
+    error::Error as NomError,
+    sequence::{preceded, terminated},
+};
+
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
     println!("Server is running on port 6379");
 
@@ -48,8 +57,70 @@ enum RespTypes {
     SimpleString(String),
     Error(String),
     Integer(i64),
-    BulkString(String),
+    BulkString(Option<String>),
     Array(Vec<RespTypes>),
+}
+
+type ParseResult<'a> = IResult<&'a [u8], &'a [u8], NomError<&'a [u8]>>;
+impl RespTypes {
+    pub fn new(buf: &[u8]) -> Result<RespTypes> {
+        if buf.len() < 2 {
+            return Err(anyhow!("Buffer too short"));
+        }
+
+        match buf[0] {
+            b'+' => Ok(Self::parse_simple_string(buf)?),
+            b':' => Ok(Self::parse_integer(buf)?),
+            b'-' => Ok(Self::parse_error(buf)?),
+            b'$' => {
+                let (remaining, string_len) = Self::parse_raw_buffer(buf, '$')?;
+                let len: i32 = str::from_utf8(string_len)?.parse()?;
+
+                if len == -1 {
+                    return Ok(RespTypes::BulkString(None));
+                }
+
+                let len = len as usize;
+                if remaining.len() < len + 2 {
+                    return Err(anyhow!("Buffer too short for bulk string"));
+                }
+
+                Ok(RespTypes::BulkString(Some(
+                    str::from_utf8(&remaining[..len])?.to_string(),
+                )))
+            }
+            _ => Err(anyhow!("Unknown RESP type")),
+        }
+    }
+
+    fn parse_raw_buffer(buf: &[u8], prefix: char) -> Result<(&[u8], &[u8])> {
+        let result: ParseResult =
+            preceded(char(prefix), terminated(take_until("\r\n"), tag("\r\n"))).parse(buf);
+
+        result.map_err(|e| anyhow!("Parse error: {}", e))
+    }
+
+    fn parse_simple_string(buf: &[u8]) -> Result<Self> {
+        let string = str::from_utf8(Self::parse_raw_buffer(buf, '+')?.1)
+            .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+            .to_string();
+        Ok(Self::SimpleString(string))
+    }
+
+    fn parse_integer(buf: &[u8]) -> Result<Self> {
+        let integer = str::from_utf8(Self::parse_raw_buffer(buf, ':')?.1)
+            .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+            .parse()
+            .map_err(|e| anyhow!("Invalid integer format: {}", e))?;
+        Ok(Self::Integer(integer))
+    }
+
+    fn parse_error(buf: &[u8]) -> Result<Self> {
+        let error = str::from_utf8(Self::parse_raw_buffer(buf, '-')?.1)
+            .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+            .to_string();
+        Ok(Self::Error(error))
+    }
 }
 
 impl std::fmt::Debug for RespTypes {
@@ -58,7 +129,7 @@ impl std::fmt::Debug for RespTypes {
             Self::SimpleString(s) => write!(f, "SimpleString({})", s),
             Self::Error(e) => write!(f, "Error({})", e),
             Self::Integer(i) => write!(f, "Integer({})", i),
-            Self::BulkString(s) => write!(f, "BulkString({})", s),
+            Self::BulkString(s) => write!(f, "BulkString({:?})", s),
             Self::Array(a) => {
                 f.write_str("Array(")?;
                 for item in a.iter() {
@@ -66,59 +137,6 @@ impl std::fmt::Debug for RespTypes {
                 }
                 f.write_str(")")
             }
-        }
-    }
-}
-
-impl RespTypes {
-    pub fn new(buf: &[u8]) -> Result<RespTypes, &'static str> {
-        if buf.len() < 2 {
-            return Err("Buffer too short");
-        }
-
-        let cr_pos = buf.iter().position(|&x| x == b'\r');
-        if cr_pos.is_none()
-            || (cr_pos.unwrap() + 1 >= buf.len())
-            || buf[cr_pos.unwrap() + 1] != b'\n'
-        {
-            return Err("Invalid CRLF sequence");
-        }
-
-        let cr_pos = cr_pos.unwrap();
-
-        match buf[0] {
-            b'+' => Ok(RespTypes::SimpleString(
-                str::from_utf8(&buf[1..cr_pos])
-                    .map_err(|_| "Invalid UTF-8 encoding")?
-                    .to_string(),
-            )),
-            b':' => Ok(RespTypes::Integer(
-                str::from_utf8(&buf[1..cr_pos])
-                    .map_err(|_| "Invalid UTF-8 encoding")?
-                    .parse()
-                    .map_err(|_| "Invalid integer format")?,
-            )),
-            b'-' => Ok(RespTypes::Error(
-                str::from_utf8(&buf[1..cr_pos])
-                    .map_err(|_| "Invalid UTF-8 encoding")?
-                    .to_string(),
-            )),
-            b'$' => {
-                let len: i32 = str::from_utf8(&buf[1..cr_pos])
-                    .map_err(|_| "Invalid UTF-8 encoding")?
-                    .parse()
-                    .map_err(|_| "Invalid integer format")?;
-                if len >= 1 {
-                    Ok(RespTypes::BulkString(
-                        str::from_utf8(&buf[cr_pos + 2..len as usize + cr_pos + 2])
-                            .map_err(|_| "Invalid UTF-8 encoding")?
-                            .to_string(),
-                    ))
-                } else {
-                    Ok(RespTypes::BulkString("".to_string()))
-                }
-            }
-            _ => Err("Unknown RESP type"),
         }
     }
 }
