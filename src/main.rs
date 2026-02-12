@@ -1,10 +1,9 @@
 use anyhow::{Result, anyhow};
 use btoi::btoi;
 use nom::{
-    IResult, Parser,
-    bytes::{tag, take_until},
-    character::char,
-    error::Error as NomError,
+    Parser,
+    bytes::{complete::tag, take_until},
+    character::{char, complete::line_ending},
     sequence::{preceded, terminated},
 };
 
@@ -62,7 +61,6 @@ enum RespTypes {
     Array(Vec<RespTypes>),
 }
 
-type ParseResult<'a> = IResult<&'a [u8], &'a [u8], NomError<&'a [u8]>>;
 impl RespTypes {
     pub fn new(buf: &[u8]) -> Result<RespTypes> {
         if buf.len() < 2 {
@@ -73,52 +71,57 @@ impl RespTypes {
             b'+' => Ok(Self::parse_simple_string(buf)?),
             b':' => Ok(Self::parse_integer(buf)?),
             b'-' => Ok(Self::parse_error(buf)?),
-            b'$' => {
-                let (remaining, string_len) = Self::parse_raw_buffer(buf, '$')?;
-                let len: i32 = str::from_utf8(string_len)?.parse()?;
-
-                if len == -1 {
-                    return Ok(RespTypes::BulkString(None));
-                }
-
-                let len = len as usize;
-                if remaining.len() < len + 2 {
-                    return Err(anyhow!("Buffer too short for bulk string"));
-                }
-
-                Ok(RespTypes::BulkString(Some(
-                    str::from_utf8(&remaining[..len])?.to_string(),
-                )))
-            }
+            b'$' => Ok(Self::parse_bulk_string(buf)?),
             _ => Err(anyhow!("Unknown RESP type")),
         }
     }
 
-    fn parse_raw_buffer(buf: &[u8], prefix: char) -> Result<(&[u8], &[u8])> {
-        let result: ParseResult =
-            preceded(char(prefix), terminated(take_until("\r\n"), tag("\r\n"))).parse(buf);
+    fn parse_raw_buffer<'a>(buf: &'a [u8], prefix: &'a str) -> Result<(&'a [u8], &'a [u8])> {
+        let result: nom::IResult<&[u8], &[u8]> =
+            preceded(tag(prefix), terminated(take_until("\r\n"), line_ending)).parse(buf);
 
         result.map_err(|e| anyhow!("Parse error: {}", e))
     }
 
     fn parse_simple_string(buf: &[u8]) -> Result<Self> {
         Ok(Self::SimpleString(
-            str::from_utf8(Self::parse_raw_buffer(buf, '+')?.1)
+            str::from_utf8(Self::parse_raw_buffer(buf, "+")?.1)
                 .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
                 .to_string(),
         ))
     }
 
     fn parse_integer(buf: &[u8]) -> Result<Self> {
-        Ok(Self::Integer(btoi(Self::parse_raw_buffer(buf, ':')?.1)?))
+        Ok(Self::Integer(btoi(Self::parse_raw_buffer(buf, ":")?.1)?))
     }
 
     fn parse_error(buf: &[u8]) -> Result<Self> {
         Ok(Self::Error(
-            str::from_utf8(Self::parse_raw_buffer(buf, '-')?.1)
+            str::from_utf8(Self::parse_raw_buffer(buf, "-")?.1)
                 .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
                 .to_string(),
         ))
+    }
+
+    fn parse_bulk_string(buf: &[u8]) -> Result<Self> {
+        let parse_result: nom::IResult<&[u8], &[u8]> =
+            preceded(char('$'), take_until("\r\n")).parse(buf);
+        let (remaining, len_u8) = parse_result.map_err(|e| anyhow!("Parse error: {}", e))?;
+        let len: i32 = btoi(len_u8)?;
+
+        if len == -1 {
+            return Ok(RespTypes::BulkString(None));
+        }
+
+        if remaining.len() != 4 + len as usize {
+            return Err(anyhow!("Buffer len doesn't match prefixed len"));
+        }
+
+        Ok(RespTypes::BulkString(Some(
+            str::from_utf8(Self::parse_raw_buffer(remaining, "\r\n")?.1)
+                .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+                .to_string(),
+        )))
     }
 }
 
