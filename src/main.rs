@@ -3,7 +3,10 @@ use btoi::btoi;
 use nom::{
     Parser,
     bytes::{complete::tag, take_until},
-    character::{char, complete::line_ending},
+    character::{
+        char,
+        complete::{crlf, line_ending},
+    },
     sequence::{preceded, terminated},
 };
 
@@ -68,10 +71,11 @@ impl RespTypes {
         }
 
         match buf[0] {
-            b'+' => Ok(Self::parse_simple_string(buf)?),
-            b':' => Ok(Self::parse_integer(buf)?),
-            b'-' => Ok(Self::parse_error(buf)?),
-            b'$' => Ok(Self::parse_bulk_string(buf)?),
+            b'+' => Ok(Self::parse_simple_string(buf)?.1),
+            b':' => Ok(Self::parse_integer(buf)?.1),
+            b'-' => Ok(Self::parse_error(buf)?.1),
+            b'$' => Ok(Self::parse_bulk_string(buf)?.1),
+            b'*' => Ok(Self::parse_array(buf)?.1),
             _ => Err(anyhow!("Unknown RESP type")),
         }
     }
@@ -83,45 +87,88 @@ impl RespTypes {
         result.map_err(|e| anyhow!("Parse error: {}", e))
     }
 
-    fn parse_simple_string(buf: &[u8]) -> Result<Self> {
-        Ok(Self::SimpleString(
-            str::from_utf8(Self::parse_raw_buffer(buf, "+")?.1)
-                .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
-                .to_string(),
+    fn parse_simple_string(buf: &[u8]) -> Result<(&[u8], Self)> {
+        let (remaining, string) = Self::parse_raw_buffer(buf, "+")?;
+        Ok((
+            remaining,
+            Self::SimpleString(
+                str::from_utf8(string)
+                    .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+                    .to_string(),
+            ),
         ))
     }
 
-    fn parse_integer(buf: &[u8]) -> Result<Self> {
-        Ok(Self::Integer(btoi(Self::parse_raw_buffer(buf, ":")?.1)?))
+    fn parse_integer(buf: &[u8]) -> Result<(&[u8], Self)> {
+        let (remaining, result) = Self::parse_raw_buffer(buf, ":")?;
+        Ok((remaining, Self::Integer(btoi(result)?)))
     }
 
-    fn parse_error(buf: &[u8]) -> Result<Self> {
-        Ok(Self::Error(
-            str::from_utf8(Self::parse_raw_buffer(buf, "-")?.1)
-                .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
-                .to_string(),
+    fn parse_error(buf: &[u8]) -> Result<(&[u8], Self)> {
+        let (remaining, result) = Self::parse_raw_buffer(buf, "-")?;
+
+        Ok((
+            remaining,
+            Self::Error(
+                str::from_utf8(result)
+                    .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+                    .to_string(),
+            ),
         ))
     }
 
-    fn parse_bulk_string(buf: &[u8]) -> Result<Self> {
+    fn parse_bulk_string(buf: &[u8]) -> Result<(&[u8], Self)> {
         let parse_result: nom::IResult<&[u8], &[u8]> =
             preceded(char('$'), take_until("\r\n")).parse(buf);
         let (remaining, len_u8) = parse_result.map_err(|e| anyhow!("Parse error: {}", e))?;
         let len: i32 = btoi(len_u8)?;
 
         if len == -1 {
-            return Ok(RespTypes::BulkString(None));
+            return Ok((remaining, RespTypes::BulkString(None)));
         }
 
-        if remaining.len() != 4 + len as usize {
+        let (remaining, result) = Self::parse_raw_buffer(remaining, "\r\n")?;
+        if result.len() != len as usize {
             return Err(anyhow!("Buffer len doesn't match prefixed len"));
         }
 
-        Ok(RespTypes::BulkString(Some(
-            str::from_utf8(Self::parse_raw_buffer(remaining, "\r\n")?.1)
-                .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
-                .to_string(),
-        )))
+        Ok((
+            remaining,
+            RespTypes::BulkString(Some(
+                str::from_utf8(result)
+                    .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
+                    .to_string(),
+            )),
+        ))
+    }
+
+    fn parse_array(buf: &[u8]) -> Result<(&[u8], Self)> {
+        let parse_result: nom::IResult<&[u8], &[u8]> =
+            preceded(char('*'), take_until("\r\n")).parse(buf);
+        let (remaining, len_u8) = parse_result.map_err(|e| anyhow!("Parse error: {}", e))?;
+        let len: i32 = btoi(len_u8)?;
+
+        let mut array = vec![];
+
+        let parse_result: nom::IResult<&[u8], &[u8]> = crlf(remaining);
+        let (mut remaining, _) = parse_result.map_err(|e| anyhow!("Parse error: {}", e))?;
+        while !remaining.is_empty() {
+            let (rem, result) = match remaining[0] {
+                b'+' => Self::parse_simple_string(remaining)?,
+                b':' => Self::parse_integer(remaining)?,
+                b'-' => Self::parse_error(remaining)?,
+                b'$' => Self::parse_bulk_string(remaining)?,
+                b'*' => Self::parse_array(remaining)?,
+                _ => return Err(anyhow!("Unknown RESP type")),
+            };
+            array.push(result);
+            remaining = rem
+        }
+        if len != array.len() as i32 {
+            return Err(anyhow!("Buffer len doesn't match prefixed len"));
+        }
+
+        Ok((remaining, RespTypes::Array(array)))
     }
 }
 
@@ -133,9 +180,9 @@ impl std::fmt::Debug for RespTypes {
             Self::Integer(i) => write!(f, "Integer({})", i),
             Self::BulkString(s) => write!(f, "BulkString({:?})", s),
             Self::Array(a) => {
-                f.write_str("Array(")?;
+                f.write_str("Array(\n")?;
                 for item in a.iter() {
-                    write!(f, "{:?}", item)?;
+                    writeln!(f, "{:?},", item)?;
                 }
                 f.write_str(")")
             }
