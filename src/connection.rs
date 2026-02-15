@@ -1,8 +1,9 @@
 use anyhow::Result;
+use nom::AsBytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::resp::Parser;
+use crate::resp::{Frame, Parser, Writer};
 
 pub struct Connection {
     socket: TcpStream,
@@ -29,10 +30,12 @@ impl Connection {
             match self.socket.read(&mut self.buffer).await {
                 Ok(0) => return Ok(()),
                 Ok(n) => {
-                    let resp_type = Parser::parse(&self.buffer[0..n]);
-                    println!("Received: {:?}", resp_type);
+                    let result = Parser::parse(&self.buffer[0..n]);
+                    println!("Received: {:?}", result);
 
-                    let buffer = format!("{:?}\r\n", resp_type);
+                    let frame = result.unwrap_or_else(|e| Frame::Error(e.to_string()));
+
+                    let buffer = Writer::write(&frame);
                     let n = buffer.len();
                     if self
                         .socket

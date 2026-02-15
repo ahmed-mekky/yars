@@ -146,3 +146,34 @@ impl std::fmt::Debug for Frame {
         }
     }
 }
+
+pub struct Writer;
+
+impl Writer {
+    pub fn write(frame: &Frame) -> Vec<u8> {
+        match frame {
+            Frame::SimpleString(s) => format!("+{}\r\n", s).into_bytes(),
+            Frame::Error(e) => format!("-{}\r\n", e).into_bytes(),
+            Frame::Integer(i) => format!(":{}\r\n", i).into_bytes(),
+            Frame::BulkString(s) => match s {
+                Some(s) => {
+                    let mut bytes = format!("${}\r\n", s.len()).into_bytes();
+
+                    bytes.extend_from_slice(s.as_bytes());
+                    bytes.extend_from_slice(b"\r\n");
+                    bytes
+                }
+                None => b"$-1\r\n".to_vec(),
+            },
+            Frame::Array(a) => {
+                let mut bytes = vec![b'*'];
+                bytes.extend(format!("{}", a.len()).into_bytes());
+                bytes.extend(b"\r\n");
+                for item in a.iter() {
+                    bytes.extend(Self::write(item));
+                }
+                bytes
+            }
+        }
+    }
+}
