@@ -29,6 +29,16 @@ YARS (Yet Another Redis Server) is an experimental Redis server implementation w
 - **Parser:** Nom (RESP parsing)
 - **Error Handling:** Anyhow
 
+## Development
+
+```bash
+# Install pre-commit hooks
+pip install pre-commit
+pre-commit install
+```
+
+Hooks run on every commit: `cargo fmt`, `cargo clippy`, `cargo check`, and `cargo test`.
+
 ## Building
 
 ```bash

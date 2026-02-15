@@ -34,7 +34,12 @@ impl Connection {
 
                     let buffer = format!("{:?}\r\n", resp_type);
                     let n = buffer.len();
-                    if self.socket.write_all(&buffer.as_bytes()[0..n]).await.is_err() {
+                    if self
+                        .socket
+                        .write_all(&buffer.as_bytes()[0..n])
+                        .await
+                        .is_err()
+                    {
                         println!("Failed to write data to socket");
                         return Ok(());
                     }

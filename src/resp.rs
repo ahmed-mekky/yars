@@ -1,13 +1,13 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use btoi::btoi;
 use nom::{
+    Parser as NomParser,
     bytes::{complete::tag, take_until},
     character::{
         char,
         complete::{crlf, line_ending},
     },
     sequence::{preceded, terminated},
-    Parser as NomParser,
 };
 
 #[derive(Clone)]
