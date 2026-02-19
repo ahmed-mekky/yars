@@ -17,6 +17,32 @@ pub enum Frame {
     Integer(i64),
     BulkString(Option<String>),
     Array(Vec<Frame>),
+    Status(String),
+}
+
+impl Frame {
+    pub fn to_vec(&self) -> Result<Vec<u8>> {
+        match self {
+            Self::SimpleString(s) => Ok(s.as_bytes().to_vec()),
+            Self::Error(e) => Ok(format!("-{}\r\n", e).into_bytes()),
+            Self::Integer(i) => Ok(format!(":{}\r\n", i).into_bytes()),
+            Self::BulkString(None) => Ok(b"-1\r\n".to_vec()),
+            Self::BulkString(Some(s)) => {
+                let len = s.len() as u64;
+                Ok(format!("${}\r\n{}\r\n", len, s).into_bytes())
+            }
+            Self::Array(a) => {
+                let mut len = 0;
+                for frame in a {
+                    len += frame.to_vec()?.len() as u64 + 2;
+                }
+                let total_len = format!("*{}\r\n", a.len()).as_bytes().len() as u64 + len;
+
+                Ok((0..total_len).map(|_| 0u8).collect())
+            }
+            Self::Status(s) => Ok(format!(":{}\r\n", s).into_bytes()),
+        }
+    }
 }
 
 pub struct Parser;
@@ -129,20 +155,24 @@ impl Parser {
     }
 }
 
-impl std::fmt::Debug for Frame {
+impl std::fmt::Display for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SimpleString(s) => write!(f, "SimpleString({})", s),
-            Self::Error(e) => write!(f, "Error({})", e),
-            Self::Integer(i) => write!(f, "Integer({})", i),
-            Self::BulkString(s) => write!(f, "BulkString({:?})", s),
-            Self::Array(a) => {
+            Frame::SimpleString(s) => write!(f, "SimpleString({})", s),
+            Frame::Error(e) => write!(f, "Error({})", e),
+            Frame::Integer(i) => write!(f, "Integer({})", i),
+            Frame::BulkString(s) => match s {
+                Some(s) => write!(f, "BulkString({:?})", s),
+                None => write!(f, "BulkString(None)"),
+            },
+            Frame::Array(a) => {
                 f.write_str("Array(\n")?;
                 for item in a.iter() {
-                    writeln!(f, "{:?},", item)?;
+                    writeln!(f, "{}", item)?;
                 }
                 f.write_str(")")
             }
+            Self::Status(s) => write!(f, "Status({})", s),
         }
     }
 }
@@ -174,6 +204,7 @@ impl Writer {
                 }
                 bytes
             }
+            Frame::Status(s) => format!("+{}\r\n", s).into_bytes(),
         }
     }
 }
