@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -35,9 +36,11 @@ impl Connection {
                     let frame = result.unwrap_or_else(|e| Frame::Error(e.to_string()));
                     println!("Received: {}", frame);
 
-                    let response = self.handle_command(frame).await;
+                    let result = self.handle_command(frame).await;
 
-                    let buffer = Writer::write(&response);
+                    println!("Result: {}", result);
+
+                    let buffer = Writer::write(&result);
                     let n = buffer.len();
                     if self
                         .socket
@@ -63,28 +66,26 @@ impl Connection {
             Frame::Array(frame) => {
                 if let Some(command) = frame.first() {
                     match command {
-                        Frame::BulkString(Some(cmd)) => match cmd.as_str() {
-                            "PING" => Frame::SimpleString("PONG".into()),
-                            "SET" => {
+                        Frame::BulkString(cmd) => match cmd.deref() {
+                            b"PING" => Frame::SimpleString("PONG".into()),
+                            b"SET" => {
                                 if let Some(key) = frame.get(1)
                                     && let Some(value) = frame.get(2)
                                 {
                                     let _ =
                                         self.db.set(key.to_string(), value.to_vec().unwrap()).await;
-                                    return Frame::Status("OK".into());
+                                    return Frame::SimpleString("OK".into());
                                 }
                                 Frame::Error("Invalid arguments for SET command".into())
                             }
-                            "GET" => {
+                            b"GET" => {
                                 if let Some(key) = frame.get(1) {
                                     if let Ok(value_option) = self.db.get(key.to_string()).await
                                         && let Some(value) = value_option
                                     {
-                                        return Frame::BulkString(Some(
-                                            String::from_utf8(value).unwrap(),
-                                        ));
+                                        return Frame::BulkString(value);
                                     }
-                                    return Frame::BulkString(None);
+                                    return Frame::Null;
                                 }
                                 Frame::Error("Invalid arguments for GET command".into())
                             }

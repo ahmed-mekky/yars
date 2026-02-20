@@ -15,9 +15,9 @@ pub enum Frame {
     SimpleString(String),
     Error(String),
     Integer(i64),
-    BulkString(Option<String>),
+    BulkString(Vec<u8>),
     Array(Vec<Frame>),
-    Status(String),
+    Null,
 }
 
 impl Frame {
@@ -26,10 +26,13 @@ impl Frame {
             Self::SimpleString(s) => Ok(s.as_bytes().to_vec()),
             Self::Error(e) => Ok(format!("-{}\r\n", e).into_bytes()),
             Self::Integer(i) => Ok(format!(":{}\r\n", i).into_bytes()),
-            Self::BulkString(None) => Ok(b"-1\r\n".to_vec()),
-            Self::BulkString(Some(s)) => {
-                let len = s.len() as u64;
-                Ok(format!("${}\r\n{}\r\n", len, s).into_bytes())
+            Self::BulkString(s) => {
+                let len = s.len();
+                let header = format!("${}\r\n", len);
+                let mut result = header.into_bytes();
+                result.extend_from_slice(s);
+                result.extend_from_slice(b"\r\n");
+                Ok(result)
             }
             Self::Array(a) => {
                 let mut len = 0;
@@ -40,7 +43,7 @@ impl Frame {
 
                 Ok((0..total_len).map(|_| 0u8).collect())
             }
-            Self::Status(s) => Ok(format!(":{}\r\n", s).into_bytes()),
+            Self::Null => Ok(b"-null\r\n".to_vec()),
         }
     }
 }
@@ -107,7 +110,7 @@ impl Parser {
         let len: i32 = btoi(len_u8)?;
 
         if len == -1 {
-            return Ok((remaining, Frame::BulkString(None)));
+            return Ok((remaining, Frame::Null));
         }
 
         let (remaining, result) = Self::parse_raw_buffer(remaining, "\r\n")?;
@@ -115,14 +118,7 @@ impl Parser {
             return Err(anyhow!("Buffer len doesn't match prefixed len"));
         }
 
-        Ok((
-            remaining,
-            Frame::BulkString(Some(
-                str::from_utf8(result)
-                    .map_err(|e| anyhow!("Invalid UTF-8 encoding: {}", e))?
-                    .to_string(),
-            )),
-        ))
+        Ok((remaining, Frame::BulkString(Vec::from(result))))
     }
 
     fn parse_array(buf: &[u8]) -> Result<(&[u8], Frame)> {
@@ -161,10 +157,7 @@ impl std::fmt::Display for Frame {
             Frame::SimpleString(s) => write!(f, "SimpleString({})", s),
             Frame::Error(e) => write!(f, "Error({})", e),
             Frame::Integer(i) => write!(f, "Integer({})", i),
-            Frame::BulkString(s) => match s {
-                Some(s) => write!(f, "BulkString({:?})", s),
-                None => write!(f, "BulkString(None)"),
-            },
+            Frame::BulkString(s) => write!(f, "BulkString({:?})", s),
             Frame::Array(a) => {
                 f.write_str("Array(\n")?;
                 for item in a.iter() {
@@ -172,7 +165,7 @@ impl std::fmt::Display for Frame {
                 }
                 f.write_str(")")
             }
-            Self::Status(s) => write!(f, "Status({})", s),
+            Frame::Null => write!(f, "Null"),
         }
     }
 }
@@ -185,16 +178,14 @@ impl Writer {
             Frame::SimpleString(s) => format!("+{}\r\n", s).into_bytes(),
             Frame::Error(e) => format!("-{}\r\n", e).into_bytes(),
             Frame::Integer(i) => format!(":{}\r\n", i).into_bytes(),
-            Frame::BulkString(s) => match s {
-                Some(s) => {
-                    let mut bytes = format!("${}\r\n", s.len()).into_bytes();
-
-                    bytes.extend_from_slice(s.as_bytes());
-                    bytes.extend_from_slice(b"\r\n");
-                    bytes
-                }
-                None => b"$-1\r\n".to_vec(),
-            },
+            Frame::BulkString(s) => {
+                let len = s.len();
+                let header = format!("${}\r\n", len);
+                let mut result = header.into_bytes();
+                result.extend_from_slice(s);
+                result.extend_from_slice(b"\r\n");
+                result
+            }
             Frame::Array(a) => {
                 let mut bytes = vec![b'*'];
                 bytes.extend(format!("{}", a.len()).into_bytes());
@@ -204,7 +195,8 @@ impl Writer {
                 }
                 bytes
             }
-            Frame::Status(s) => format!("+{}\r\n", s).into_bytes(),
+
+            Frame::Null => b"$-1\r\n".to_vec(),
         }
     }
 }
