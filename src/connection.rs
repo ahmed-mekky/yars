@@ -1,106 +1,79 @@
-use std::ops::Deref;
-use std::sync::Arc;
-
-use anyhow::Result;
-use nom::AsBytes;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-
 use crate::db::Db;
-use crate::resp::{Frame, Parser, Writer};
+use crate::resp::{Frame, RespCodec};
+use anyhow::Result;
+use futures::{SinkExt, StreamExt};
+use std::sync::Arc;
+use tokio::net::TcpStream;
+use tokio_util::codec::{Decoder, Framed};
 
 pub struct Connection {
-    socket: TcpStream,
-    buffer: [u8; 1024],
+    framed: Framed<TcpStream, RespCodec>,
     db: Arc<Db>,
 }
 
 impl Connection {
     pub fn new(socket: TcpStream, db: Arc<Db>) -> Self {
         Self {
-            socket,
-            buffer: [0; 1024],
+            framed: RespCodec.framed(socket),
             db,
         }
     }
 
     pub async fn handle(mut self) -> Result<()> {
-        println!("Accepted connection from {:?}", self.socket.peer_addr());
-
-        loop {
-            match self.socket.read(&mut self.buffer).await {
-                Ok(0) => return Ok(()),
-                Ok(n) => {
-                    let result = Parser::parse(&self.buffer[0..n]);
-
-                    let frame = result.unwrap_or_else(|e| Frame::Error(e.to_string()));
-                    println!("Received: {}", frame);
-
-                    let result = self.handle_command(frame).await;
-
-                    println!("Result: {}", result);
-
-                    let buffer = Writer::write(&result);
-                    let n = buffer.len();
-                    if self
-                        .socket
-                        .write_all(&buffer.as_bytes()[0..n])
-                        .await
-                        .is_err()
-                    {
-                        println!("Failed to write data to socket");
-                        return Ok(());
-                    }
-                }
-                Err(e) => {
-                    println!("Error reading from socket: {:?}", e);
-                    return Ok(());
-                }
-            }
+        while let Some(frame) = self.framed.next().await {
+            let frame = frame?;
+            println!("Received: {}", frame);
+            let result = self.handle_command(frame).await;
+            println!("Result: {}", result);
+            self.framed.send(result).await?;
         }
+        Ok(())
     }
 
     async fn handle_command(&self, frame: Frame) -> Frame {
-        println!("Handling command: {}", &frame);
         match frame {
-            Frame::Array(frame) => {
-                if let Some(command) = frame.first() {
-                    match command {
-                        Frame::BulkString(cmd) => match cmd.deref() {
-                            b"PING" => Frame::SimpleString("PONG".into()),
-                            b"SET" => {
-                                if let Some(key) = frame.get(1)
-                                    && let Some(value) = frame.get(2)
-                                {
-                                    let _ =
-                                        self.db.set(key.to_string(), value.to_vec().unwrap()).await;
-                                    return Frame::SimpleString("OK".into());
-                                }
-                                Frame::Error("Invalid arguments for SET command".into())
-                            }
-                            b"GET" => {
-                                if let Some(key) = frame.get(1) {
-                                    if let Ok(value_option) = self.db.get(key.to_string()).await
-                                        && let Some(value) = value_option
-                                    {
-                                        return Frame::BulkString(value);
-                                    }
-                                    return Frame::Null;
-                                }
-                                Frame::Error("Invalid arguments for GET command".into())
-                            }
-                            _ => Frame::Error("Unknown command".into()),
-                        },
-                        _ => {
-                            println!("Invalid command format");
-                            Frame::Error("Invalid command format".into())
-                        }
-                    }
-                } else {
-                    Frame::Error("Command is missing".into())
-                }
-            }
-            _ => Frame::Error("ERR Not Supported".to_string()),
+            Frame::Array(parts) => self.dispatch(parts).await,
+            _ => Frame::Error("ERR unknown command".into()),
+        }
+    }
+
+    async fn dispatch(&self, parts: Vec<Frame>) -> Frame {
+        let Some(Frame::BulkString(cmd)) = parts.first() else {
+            return Frame::Error("ERR missing command".into());
+        };
+        match cmd.as_slice() {
+            b"PING" => Frame::SimpleString("PONG".into()),
+            b"SET" => self.cmd_set(&parts).await,
+            b"GET" => self.cmd_get(&parts).await,
+            _ => Frame::Error("ERR unknown command".into()),
+        }
+    }
+
+    async fn cmd_set(&self, parts: &[Frame]) -> Frame {
+        let (Some(Frame::BulkString(key)), Some(Frame::BulkString(value))) =
+            (parts.get(1), parts.get(2))
+        else {
+            return Frame::Error("ERR wrong number of arguments for SET".into());
+        };
+
+        match self
+            .db
+            .set(String::from_utf8_lossy(key).into_owned(), value.clone())
+            .await
+        {
+            Ok(_) => Frame::SimpleString("OK".into()),
+            Err(e) => Frame::Error(e.to_string()),
+        }
+    }
+    async fn cmd_get(&self, parts: &[Frame]) -> Frame {
+        let Some(Frame::BulkString(key)) = parts.get(1) else {
+            return Frame::Error("ERR wrong number of arguments for GET".into());
+        };
+
+        match self.db.get(String::from_utf8_lossy(key).into_owned()).await {
+            Ok(Some(value)) => Frame::BulkString(value),
+            Ok(None) => Frame::Null,
+            Err(e) => Frame::Error(e.to_string()),
         }
     }
 }
