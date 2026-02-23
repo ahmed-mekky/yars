@@ -45,6 +45,7 @@ impl Connection {
             b"PING" => Frame::SimpleString("PONG".into()),
             b"SET" => self.cmd_set(&parts).await,
             b"GET" => self.cmd_get(&parts).await,
+            b"DEL" => self.cmd_del(&parts).await,
             _ => Frame::Error("ERR unknown command".into()),
         }
     }
@@ -73,6 +74,17 @@ impl Connection {
         match self.db.get(String::from_utf8_lossy(key).into_owned()).await {
             Ok(Some(value)) => Frame::BulkString(value),
             Ok(None) => Frame::NullBulkString,
+            Err(e) => Frame::Error(e.to_string()),
+        }
+    }
+
+    async fn cmd_del(&self, parts: &[Frame]) -> Frame {
+        let Some(Frame::BulkString(key)) = parts.get(1) else {
+            return Frame::Error("ERR wrong number of arguments for DEL".into());
+        };
+
+        match self.db.del(String::from_utf8_lossy(key).into_owned()).await {
+            Ok(_) => Frame::Integer(1),
             Err(e) => Frame::Error(e.to_string()),
         }
     }

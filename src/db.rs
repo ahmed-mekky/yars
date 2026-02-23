@@ -18,4 +18,9 @@ impl Db {
         let map = self.0.read().await;
         Ok(map.get(&key).cloned())
     }
+
+    pub async fn del(&self, key: String) -> Result<(), Box<dyn Error>> {
+        self.0.write().await.remove(&key);
+        Ok(())
+    }
 }
