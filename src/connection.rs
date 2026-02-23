@@ -72,7 +72,7 @@ impl Connection {
 
         match self.db.get(String::from_utf8_lossy(key).into_owned()).await {
             Ok(Some(value)) => Frame::BulkString(value),
-            Ok(None) => Frame::Null,
+            Ok(None) => Frame::NullBulkString,
             Err(e) => Frame::Error(e.to_string()),
         }
     }

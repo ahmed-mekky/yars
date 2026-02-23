@@ -15,8 +15,9 @@ pub enum Frame {
     Error(String),
     Integer(i64),
     BulkString(Vec<u8>),
+    NullBulkString,
     Array(Vec<Frame>),
-    Null,
+    NullArray,
 }
 
 impl Frame {
@@ -77,7 +78,7 @@ impl Frame {
 
         if len == -1 {
             let (remaining, _) = crlf(remaining)?;
-            return Ok((remaining, Frame::Null));
+            return Ok((remaining, Frame::NullBulkString));
         }
 
         let len = len as usize;
@@ -134,6 +135,7 @@ impl From<&Frame> for Bytes {
                 let data = format!("${}\r\n{}\r\n", s.len(), String::from_utf8_lossy(s));
                 Bytes::from(data)
             }
+            Frame::NullBulkString => Bytes::from_static(b"$-1\r\n"),
             Frame::Array(a) => {
                 let mut bytes = format!("*{}\r\n", a.len()).into_bytes();
                 for item in a.iter() {
@@ -141,12 +143,12 @@ impl From<&Frame> for Bytes {
                 }
                 Bytes::from(bytes)
             }
-            Frame::Null => Bytes::from_static(b"*-1\r\n"),
+            Frame::NullArray => Bytes::from_static(b"*-1\r\n"),
         }
     }
 }
 
-//for debugging
+#[cfg(debug_assertions)]
 impl std::fmt::Display for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -154,6 +156,7 @@ impl std::fmt::Display for Frame {
             Frame::Error(e) => write!(f, "Error({})", e),
             Frame::Integer(i) => write!(f, "Integer({})", i),
             Frame::BulkString(s) => write!(f, "BulkString({:?})", s),
+            Frame::NullBulkString => write!(f, "NullBulkString"),
             Frame::Array(a) => {
                 f.write_str("Array(\n")?;
                 for item in a.iter() {
@@ -161,7 +164,7 @@ impl std::fmt::Display for Frame {
                 }
                 f.write_str(")")
             }
-            Frame::Null => write!(f, "Null"),
+            Frame::NullArray => write!(f, "NullArray"),
         }
     }
 }
