@@ -4,7 +4,7 @@ A Redis-compatible server implementation in Rust.
 
 ## Overview
 
-YARS (Yet Another Redis Server) is an experimental Redis server implementation written in Rust. It currently implements the RESP (Redis Serialization Protocol) parser and provides a basic TCP server that echoes back parsed commands.
+YARS (Yet Another Redis Server) is an experimental Redis server implementation written in Rust. It currently implements all the RESP2 (Redis Serialization Protocol) types and some of its commands.
 
 ## Status
 
@@ -12,11 +12,10 @@ YARS (Yet Another Redis Server) is an experimental Redis server implementation w
 
 - RESP protocol parsing (all types: SimpleString, Error, Integer, BulkString, Array)
 - TCP server listening on port 6379
-- Basic command echo functionality
+- Basic Redis commands (GET, SET, DEL)
 
 **Not Yet Implemented:**
 
-- Actual Redis commands (GET, SET, DEL, etc.)
 - Data persistence
 - Authentication
 - Replication
@@ -37,7 +36,7 @@ pip install pre-commit
 pre-commit install
 ```
 
-Hooks run on every commit: `cargo fmt`, `cargo clippy`, `cargo check`, and `cargo test`.
+Hooks run on every commit: `cargo fmt`, `cargo clippy`, `cargo check`, `cargo test`, and `cargo audit`.
 
 ## Building
 
