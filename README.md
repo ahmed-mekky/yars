@@ -64,7 +64,7 @@ echo -e "*1\r\n\$4\r\nTest\r\n" | nc localhost 6379
 
 ## RESP Implementation
 
-YARS implements full RESP (Redis Serialization Protocol) parsing as defined in the [Redis protocol specification](https://redis.io/docs/reference/protocol-spec/). The parser handles:
+YARS implements full RESP (Redis Serialization Protocol) parsing as defined in the [Redis protocol specification](https://redis.io/docs/latest/develop/reference/protocol-spec/). The parser handles:
 
 | Type | Prefix | Example |
 |------|--------|---------|
