@@ -41,7 +41,7 @@ impl Connection {
         let Some(Frame::BulkString(cmd)) = parts.first() else {
             return Frame::Error("ERR missing command".into());
         };
-        match cmd.as_slice() {
+        match cmd.as_ref() {
             b"PING" => Frame::SimpleString("PONG".into()),
             b"SET" => self.cmd_set(&parts).await,
             b"GET" => self.cmd_get(&parts).await,

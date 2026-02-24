@@ -14,7 +14,7 @@ pub enum Frame {
     SimpleString(String),
     Error(String),
     Integer(i64),
-    BulkString(Vec<u8>),
+    BulkString(Bytes),
     NullBulkString,
     Array(Vec<Frame>),
     NullArray,
@@ -87,7 +87,7 @@ impl Frame {
         let (remaining, data) = take(len)(remaining)?;
         let (remaining, _) = crlf(remaining)?;
 
-        Ok((remaining, Frame::BulkString(data.to_vec())))
+        Ok((remaining, Frame::BulkString(Bytes::copy_from_slice(data))))
     }
     fn parse_array(buf: &[u8]) -> nom::IResult<&[u8], Frame> {
         let (mut remaining, len_bytes) = preceded(tag("*"), take_until("\r\n")).parse(buf)?;
@@ -132,7 +132,9 @@ impl From<&Frame> for Bytes {
             Frame::Error(e) => Bytes::from(format!("-{}\r\n", e)),
             Frame::Integer(i) => Bytes::from(format!(":{}\r\n", i)),
             Frame::BulkString(s) => {
-                let data = format!("${}\r\n{}\r\n", s.len(), String::from_utf8_lossy(s));
+                let mut data = format!("${}\r\n", s.len()).into_bytes();
+                data.extend_from_slice(s);
+                data.extend_from_slice(b"\r\n");
                 Bytes::from(data)
             }
             Frame::NullBulkString => Bytes::from_static(b"$-1\r\n"),
