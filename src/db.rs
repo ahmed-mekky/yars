@@ -20,8 +20,7 @@ impl Db {
         Ok(map.get(&key).cloned())
     }
 
-    pub async fn del(&self, key: String) -> Result<(), Box<dyn Error>> {
-        self.0.write().await.remove(&key);
-        Ok(())
+    pub async fn del(&self, key: String) -> Result<bool, Box<dyn Error>> {
+        Ok(self.0.write().await.remove(&key).is_some())
     }
 }

@@ -79,13 +79,21 @@ impl Connection {
     }
 
     async fn cmd_del(&self, parts: &[Frame]) -> Frame {
-        let Some(Frame::BulkString(key)) = parts.get(1) else {
+        if parts.len() < 2 {
             return Frame::Error("ERR wrong number of arguments for DEL".into());
-        };
-
-        match self.db.del(String::from_utf8_lossy(key).into_owned()).await {
-            Ok(_) => Frame::Integer(1),
-            Err(e) => Frame::Error(e.to_string()),
         }
+
+        let mut count: i64 = 0;
+        for part in &parts[1..] {
+            let Frame::BulkString(key) = part else {
+                return Frame::Error("ERR invalid argument for DEL".into());
+            };
+            match self.db.del(String::from_utf8_lossy(key).into_owned()).await {
+                Ok(true) => count += 1,
+                Ok(false) => {}
+                Err(e) => return Frame::Error(e.to_string()),
+            }
+        }
+        Frame::Integer(count)
     }
 }
