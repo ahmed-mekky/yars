@@ -1,13 +1,13 @@
-use std::{collections::HashMap, error::Error, sync::Arc};
+use std::{collections::HashMap, error::Error};
 
 use tokio::sync::RwLock;
 use tokio_util::bytes::Bytes;
 
-pub struct Db(Arc<RwLock<HashMap<String, Bytes>>>);
+pub struct Db(RwLock<HashMap<String, Bytes>>);
 
 impl Db {
     pub fn new() -> Self {
-        Self(Arc::new(RwLock::new(HashMap::new())))
+        Self(RwLock::new(HashMap::new()))
     }
 
     pub async fn set(&self, key: String, value: Bytes) -> Result<(), Box<dyn Error>> {
