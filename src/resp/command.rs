@@ -4,10 +4,11 @@ use tokio_util::bytes::Bytes;
 
 pub enum Command {
     Ping,
-    Get { key: String },
-    Set { key: String, value: Bytes },
-    Del { keys: Vec<String> },
+    Get { key: Bytes },
+    Set { key: Bytes, value: Bytes },
+    Del { keys: Vec<Bytes> },
 }
+
 impl TryFrom<Frame> for Command {
     type Error = Frame;
     fn try_from(frame: Frame) -> Result<Self, Self::Error> {
@@ -37,7 +38,7 @@ impl Command {
             return Err(Frame::Error("Err missing key".into()));
         };
         Ok(Command::Get {
-            key: String::from_utf8_lossy(key).into_owned(),
+            key: Bytes::copy_from_slice(key),
         })
     }
 
@@ -49,7 +50,7 @@ impl Command {
             return Err(Frame::Error("ERR missing value".into()));
         };
         Ok(Command::Set {
-            key: String::from_utf8_lossy(key).into_owned(),
+            key: Bytes::copy_from_slice(key),
             value: Bytes::copy_from_slice(value),
         })
     }
@@ -60,7 +61,7 @@ impl Command {
             .ok_or(Frame::Error("ERR missing key".into()))?
             .iter()
             .filter_map(|key| match key {
-                Frame::BulkString(key) => Some(String::from_utf8_lossy(key).into_owned()),
+                Frame::BulkString(key) => Some(Bytes::copy_from_slice(key)),
                 _ => None,
             })
             .collect();
