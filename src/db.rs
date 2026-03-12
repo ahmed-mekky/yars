@@ -20,7 +20,14 @@ impl Db {
         Ok(map.get(&key).cloned())
     }
 
-    pub async fn del(&self, key: String) -> Result<bool, Box<dyn Error>> {
-        Ok(self.0.write().await.remove(&key).is_some())
+    pub async fn del(&self, keys: Vec<String>) -> Result<i64, Box<dyn Error>> {
+        let mut map = self.0.write().await;
+        let mut count = 0;
+        for key in keys {
+            if map.remove(&key).is_some() {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 }

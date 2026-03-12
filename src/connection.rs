@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::resp::{Frame, RespCodec};
+use crate::resp::{Command, Frame, RespCodec};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -23,77 +23,32 @@ impl Connection {
         while let Some(frame) = self.framed.next().await {
             let frame = frame?;
             println!("Received: {}", frame);
-            let result = self.handle_command(frame).await;
+            let result = match Command::try_from(frame) {
+                Ok(cmd) => self.execute(cmd).await,
+                Err(err_frame) => err_frame,
+            };
             println!("Result: {}", result);
             self.framed.send(result).await?;
         }
         Ok(())
     }
 
-    async fn handle_command(&self, frame: Frame) -> Frame {
-        match frame {
-            Frame::Array(parts) => self.dispatch(parts).await,
-            _ => Frame::Error("ERR unknown command".into()),
+    async fn execute(&self, cmd: Command) -> Frame {
+        match cmd {
+            Command::Ping => Frame::SimpleString("PONG".into()),
+            Command::Get { key } => match self.db.get(key).await {
+                Ok(Some(value)) => Frame::BulkString(value),
+                Ok(None) => Frame::NullBulkString,
+                Err(e) => Frame::Error(e.to_string()),
+            },
+            Command::Set { key, value } => match self.db.set(key, value).await {
+                Ok(_) => Frame::SimpleString("OK".into()),
+                Err(e) => Frame::Error(e.to_string()),
+            },
+            Command::Del { keys } => match self.db.del(keys).await {
+                Ok(count) => Frame::Integer(count),
+                Err(e) => Frame::Error(e.to_string()),
+            },
         }
-    }
-
-    async fn dispatch(&self, parts: Vec<Frame>) -> Frame {
-        let Some(Frame::BulkString(cmd)) = parts.first() else {
-            return Frame::Error("ERR missing command".into());
-        };
-        match cmd.as_ref() {
-            b"PING" => Frame::SimpleString("PONG".into()),
-            b"SET" => self.cmd_set(&parts).await,
-            b"GET" => self.cmd_get(&parts).await,
-            b"DEL" => self.cmd_del(&parts).await,
-            _ => Frame::Error("ERR unknown command".into()),
-        }
-    }
-
-    async fn cmd_set(&self, parts: &[Frame]) -> Frame {
-        let (Some(Frame::BulkString(key)), Some(Frame::BulkString(value))) =
-            (parts.get(1), parts.get(2))
-        else {
-            return Frame::Error("ERR wrong number of arguments for SET".into());
-        };
-
-        match self
-            .db
-            .set(String::from_utf8_lossy(key).into_owned(), value.clone())
-            .await
-        {
-            Ok(_) => Frame::SimpleString("OK".into()),
-            Err(e) => Frame::Error(e.to_string()),
-        }
-    }
-    async fn cmd_get(&self, parts: &[Frame]) -> Frame {
-        let Some(Frame::BulkString(key)) = parts.get(1) else {
-            return Frame::Error("ERR wrong number of arguments for GET".into());
-        };
-
-        match self.db.get(String::from_utf8_lossy(key).into_owned()).await {
-            Ok(Some(value)) => Frame::BulkString(value),
-            Ok(None) => Frame::NullBulkString,
-            Err(e) => Frame::Error(e.to_string()),
-        }
-    }
-
-    async fn cmd_del(&self, parts: &[Frame]) -> Frame {
-        if parts.len() < 2 {
-            return Frame::Error("ERR wrong number of arguments for DEL".into());
-        }
-
-        let mut count: i64 = 0;
-        for part in &parts[1..] {
-            let Frame::BulkString(key) = part else {
-                return Frame::Error("ERR invalid argument for DEL".into());
-            };
-            match self.db.del(String::from_utf8_lossy(key).into_owned()).await {
-                Ok(true) => count += 1,
-                Ok(false) => {}
-                Err(e) => return Frame::Error(e.to_string()),
-            }
-        }
-        Frame::Integer(count)
     }
 }
