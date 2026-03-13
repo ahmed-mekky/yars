@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::resp::Frame;
 use anyhow::Result;
@@ -97,6 +97,44 @@ impl Command {
                     })?;
 
                 Ok(Some(Instant::now() + Duration::from_millis(msecs)))
+            }
+            b"EXACT" => {
+                let Some(Frame::BulkString(bytes)) = input.get(4) else {
+                    return Err(Frame::Error("ERR syntax error".into()));
+                };
+
+                let secs = std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .ok_or_else(|| {
+                        Frame::Error("ERR value is not an integer or out of range".into())
+                    })?;
+
+                let target = UNIX_EPOCH + Duration::from_secs(secs);
+                let duration_from_now = target
+                    .duration_since(SystemTime::now())
+                    .map_err(|_| Frame::Error("ERR invalid expire".into()))?;
+
+                Ok(Some(Instant::now() + duration_from_now))
+            }
+            b"PXAT" => {
+                let Some(Frame::BulkString(bytes)) = input.get(4) else {
+                    return Err(Frame::Error("ERR syntax error".into()));
+                };
+
+                let msecs = std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .ok_or_else(|| {
+                        Frame::Error("ERR value is not an integer or out of range".into())
+                    })?;
+
+                let target = UNIX_EPOCH + Duration::from_millis(msecs);
+                let duration_from_now = target
+                    .duration_since(SystemTime::now())
+                    .map_err(|_| Frame::Error("ERR invalid expire time".into()))?;
+
+                Ok(Some(Instant::now() + duration_from_now))
             }
             _ => Err(Frame::Error("ERR syntax error".into())),
         }
