@@ -1,11 +1,14 @@
+use std::time::Duration;
+
 use crate::resp::Frame;
 use anyhow::Result;
+use tokio::time::Instant;
 use tokio_util::bytes::Bytes;
 
 pub enum Command {
     Ping,
     Get { key: Bytes },
-    Set { key: Bytes, value: Bytes },
+    Set { key: Bytes, entry: Entry },
     Del { keys: Vec<Bytes> },
 }
 
@@ -43,16 +46,43 @@ impl Command {
     }
 
     fn parse_set(input: Vec<Frame>) -> Result<Command, Frame> {
-        let Some(Frame::BulkString(key)) = input.get(1) else {
-            return Err(Frame::Error("ERR missing key".into()));
+        let key = match input.get(1) {
+            Some(Frame::BulkString(b)) => b.clone(),
+            _ => return Err(Frame::Error("ERR missing key".into())),
         };
-        let Some(Frame::BulkString(value)) = input.get(2) else {
-            return Err(Frame::Error("ERR missing value".into()));
+
+        let value = match input.get(2) {
+            Some(Frame::BulkString(b)) => b.clone(),
+            _ => return Err(Frame::Error("ERR missing value".into())),
         };
+
+        let exp = Self::parse_exp(input)?;
+
         Ok(Command::Set {
-            key: Bytes::copy_from_slice(key),
-            value: Bytes::copy_from_slice(value),
+            key,
+            entry: Entry { value, exp },
         })
+    }
+
+    fn parse_exp(input: Vec<Frame>) -> Result<Option<Instant>, Frame> {
+        let Some(Frame::BulkString(command)) = input.get(3) else {
+            return Err(Frame::Error("ERR syntax error".into()));
+        };
+
+        if !command.eq_ignore_ascii_case(b"EX") {
+            return Err(Frame::Error("ERR syntax error".into()));
+        }
+
+        let Some(Frame::BulkString(bytes)) = input.get(4) else {
+            return Err(Frame::Error("ERR syntax error".into()));
+        };
+
+        let secs = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or_else(|| Frame::Error("ERR value is not an integer or out of range".into()))?;
+
+        Ok(Some(Instant::now() + Duration::from_secs(secs)))
     }
 
     fn parse_del(input: Vec<Frame>) -> Result<Command, Frame> {
@@ -67,4 +97,10 @@ impl Command {
             .collect();
         Ok(Command::Del { keys })
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct Entry {
+    pub value: Bytes,
+    pub exp: Option<Instant>,
 }

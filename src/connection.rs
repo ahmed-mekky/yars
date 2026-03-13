@@ -4,6 +4,7 @@ use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::time::Instant;
 use tokio_util::codec::{Decoder, Framed};
 
 pub struct Connection {
@@ -36,12 +37,20 @@ impl Connection {
     async fn execute(&self, cmd: Command) -> Frame {
         match cmd {
             Command::Ping => Frame::SimpleString("PONG".into()),
-            Command::Get { key } => match self.db.get(key).await {
-                Ok(Some(value)) => Frame::BulkString(value),
+            Command::Get { key } => match self.db.get(&key).await {
+                Ok(Some(entry)) => {
+                    dbg!(entry.clone());
+                    if entry.exp.is_none() || entry.exp.unwrap() > Instant::now() {
+                        Frame::BulkString(entry.value)
+                    } else {
+                        self.db.forget(&key).await;
+                        Frame::NullBulkString
+                    }
+                }
                 Ok(None) => Frame::NullBulkString,
                 Err(e) => Frame::Error(e.to_string()),
             },
-            Command::Set { key, value } => match self.db.set(key, value).await {
+            Command::Set { key, entry } => match self.db.set(key, entry).await {
                 Ok(_) => Frame::SimpleString("OK".into()),
                 Err(e) => Frame::Error(e.to_string()),
             },

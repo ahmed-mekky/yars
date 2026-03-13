@@ -21,12 +21,10 @@ impl Server {
         loop {
             let (socket, _) = self.listener.accept().await?;
             let db = Arc::clone(&self.db);
-            tokio::spawn(async move {
-                let connection = Connection::new(socket, db);
-                if let Err(err) = connection.handle().await {
-                    println!("Connection error: {:?}", err);
-                }
-            });
+            let connection = Connection::new(socket, db);
+            if let Err(err) = connection.handle().await {
+                println!("Connection error: {:?}", err);
+            }
         }
     }
 }

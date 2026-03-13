@@ -3,21 +3,23 @@ use std::{collections::HashMap, error::Error};
 use tokio::sync::RwLock;
 use tokio_util::bytes::Bytes;
 
-pub struct Db(RwLock<HashMap<Bytes, Bytes>>);
+use crate::resp::Entry;
+
+pub struct Db(RwLock<HashMap<Bytes, Entry>>);
 
 impl Db {
     pub fn new() -> Self {
         Self(RwLock::new(HashMap::new()))
     }
 
-    pub async fn set(&self, key: Bytes, value: Bytes) -> Result<(), Box<dyn Error>> {
-        self.0.write().await.insert(key, value);
+    pub async fn set(&self, key: Bytes, entry: Entry) -> Result<(), Box<dyn Error>> {
+        self.0.write().await.insert(key, entry);
         Ok(())
     }
 
-    pub async fn get(&self, key: Bytes) -> Result<Option<Bytes>, Box<dyn Error>> {
+    pub async fn get(&self, key: &Bytes) -> Result<Option<Entry>, Box<dyn Error>> {
         let map = self.0.read().await;
-        Ok(map.get(&key).cloned())
+        Ok(map.get(key).cloned())
     }
 
     pub async fn del(&self, keys: Vec<Bytes>) -> Result<i64, Box<dyn Error>> {
@@ -29,5 +31,11 @@ impl Db {
             }
         }
         Ok(count)
+    }
+
+    pub async fn forget(&self, key: &Bytes) {
+        if let Ok(mut map) = self.0.try_write() {
+            map.remove(key);
+        }
     }
 }
