@@ -2,6 +2,7 @@ mod connection;
 mod db;
 mod resp;
 mod server;
+mod utils;
 
 use anyhow::Result;
 use server::Server;

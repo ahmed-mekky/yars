@@ -3,7 +3,7 @@ use std::{collections::HashMap, error::Error};
 use tokio::sync::RwLock;
 use tokio_util::bytes::Bytes;
 
-use crate::resp::Entry;
+use crate::resp::{Entry, Expiry};
 
 pub struct Db(RwLock<HashMap<Bytes, Entry>>);
 
@@ -12,7 +12,11 @@ impl Db {
         Self(RwLock::new(HashMap::new()))
     }
 
-    pub async fn set(&self, key: Bytes, entry: Entry) -> Result<(), Box<dyn Error>> {
+    pub async fn set(&self, key: Bytes, mut entry: Entry) -> Result<(), Box<dyn Error>> {
+        if let Expiry::Keep = entry.exp {
+            //TODO remove unwrap
+            entry.exp = self.get(&key).await?.unwrap().exp;
+        };
         self.0.write().await.insert(key, entry);
         Ok(())
     }

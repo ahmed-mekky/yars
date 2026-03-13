@@ -1,10 +1,10 @@
 use crate::db::Db;
-use crate::resp::{Command, Frame, RespCodec};
+use crate::resp::{Command, Expiry, Frame, RespCodec};
+use crate::utils::get_current_unix_timestamp;
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio::time::Instant;
 use tokio_util::codec::{Decoder, Framed};
 
 pub struct Connection {
@@ -40,11 +40,16 @@ impl Connection {
             Command::Get { key } => match self.db.get(&key).await {
                 Ok(Some(entry)) => {
                     dbg!(entry.clone());
-                    if entry.exp.is_none() || entry.exp.unwrap() > Instant::now() {
-                        Frame::BulkString(entry.value)
-                    } else {
-                        self.db.forget(&key).await;
-                        Frame::NullBulkString
+                    match entry.exp {
+                        Expiry::At(exp) => {
+                            if get_current_unix_timestamp() > exp {
+                                self.db.forget(&key).await;
+                                Frame::NullBulkString
+                            } else {
+                                Frame::BulkString(entry.value)
+                            }
+                        }
+                        _ => Frame::BulkString(entry.value),
                     }
                 }
                 Ok(None) => Frame::NullBulkString,

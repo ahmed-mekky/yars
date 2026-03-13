@@ -1,8 +1,5 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use crate::resp::Frame;
+use crate::{resp::Frame, utils::get_current_unix_timestamp};
 use anyhow::Result;
-use tokio::time::Instant;
 use tokio_util::bytes::Bytes;
 
 pub enum Command {
@@ -56,7 +53,11 @@ impl Command {
             _ => return Err(Frame::Error("ERR missing value".into())),
         };
 
-        let exp = Self::parse_exp(input)?;
+        let exp = match input.len() {
+            3 => Expiry::None,
+            4 | 5 => Self::parse_exp(input)?,
+            _ => return Err(Frame::Error("ERR invalid number of arguments".into())),
+        };
 
         Ok(Command::Set {
             key,
@@ -64,9 +65,9 @@ impl Command {
         })
     }
 
-    fn parse_exp(input: Vec<Frame>) -> Result<Option<Instant>, Frame> {
+    fn parse_exp(input: Vec<Frame>) -> Result<Expiry, Frame> {
         let Some(Frame::BulkString(sub_command)) = input.get(3) else {
-            return Err(Frame::Error("ERR syntax error".into()));
+            return Ok(Expiry::None);
         };
 
         match sub_command.to_ascii_uppercase().as_slice() {
@@ -82,7 +83,7 @@ impl Command {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
 
-                Ok(Some(Instant::now() + Duration::from_secs(secs)))
+                Ok(Expiry::At(get_current_unix_timestamp() + secs))
             }
             b"PX" => {
                 let Some(Frame::BulkString(bytes)) = input.get(4) else {
@@ -96,7 +97,7 @@ impl Command {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
 
-                Ok(Some(Instant::now() + Duration::from_millis(msecs)))
+                Ok(Expiry::At(get_current_unix_timestamp() + msecs))
             }
             b"EXACT" => {
                 let Some(Frame::BulkString(bytes)) = input.get(4) else {
@@ -110,12 +111,7 @@ impl Command {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
 
-                let target = UNIX_EPOCH + Duration::from_secs(secs);
-                let duration_from_now = target
-                    .duration_since(SystemTime::now())
-                    .map_err(|_| Frame::Error("ERR invalid expire".into()))?;
-
-                Ok(Some(Instant::now() + duration_from_now))
+                Ok(Expiry::At(secs))
             }
             b"PXAT" => {
                 let Some(Frame::BulkString(bytes)) = input.get(4) else {
@@ -129,13 +125,9 @@ impl Command {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
 
-                let target = UNIX_EPOCH + Duration::from_millis(msecs);
-                let duration_from_now = target
-                    .duration_since(SystemTime::now())
-                    .map_err(|_| Frame::Error("ERR invalid expire time".into()))?;
-
-                Ok(Some(Instant::now() + duration_from_now))
+                Ok(Expiry::At(msecs))
             }
+            b"KEEPTTL" => Ok(Expiry::Keep),
             _ => Err(Frame::Error("ERR syntax error".into())),
         }
     }
@@ -157,5 +149,12 @@ impl Command {
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub value: Bytes,
-    pub exp: Option<Instant>,
+    pub exp: Expiry,
+}
+
+#[derive(Clone, Debug)]
+pub enum Expiry {
+    Keep,
+    At(u64),
+    None,
 }
