@@ -65,24 +65,41 @@ impl Command {
     }
 
     fn parse_exp(input: Vec<Frame>) -> Result<Option<Instant>, Frame> {
-        let Some(Frame::BulkString(command)) = input.get(3) else {
+        let Some(Frame::BulkString(sub_command)) = input.get(3) else {
             return Err(Frame::Error("ERR syntax error".into()));
         };
 
-        if !command.eq_ignore_ascii_case(b"EX") {
-            return Err(Frame::Error("ERR syntax error".into()));
+        match sub_command.to_ascii_uppercase().as_slice() {
+            b"EX" => {
+                let Some(Frame::BulkString(bytes)) = input.get(4) else {
+                    return Err(Frame::Error("ERR syntax error".into()));
+                };
+
+                let secs = std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .ok_or_else(|| {
+                        Frame::Error("ERR value is not an integer or out of range".into())
+                    })?;
+
+                Ok(Some(Instant::now() + Duration::from_secs(secs)))
+            }
+            b"PX" => {
+                let Some(Frame::BulkString(bytes)) = input.get(4) else {
+                    return Err(Frame::Error("ERR syntax error".into()));
+                };
+
+                let msecs = std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .ok_or_else(|| {
+                        Frame::Error("ERR value is not an integer or out of range".into())
+                    })?;
+
+                Ok(Some(Instant::now() + Duration::from_millis(msecs)))
+            }
+            _ => Err(Frame::Error("ERR syntax error".into())),
         }
-
-        let Some(Frame::BulkString(bytes)) = input.get(4) else {
-            return Err(Frame::Error("ERR syntax error".into()));
-        };
-
-        let secs = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .ok_or_else(|| Frame::Error("ERR value is not an integer or out of range".into()))?;
-
-        Ok(Some(Instant::now() + Duration::from_secs(secs)))
     }
 
     fn parse_del(input: Vec<Frame>) -> Result<Command, Frame> {
