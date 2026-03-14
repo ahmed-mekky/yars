@@ -1,10 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn get_current_unix_timestamp() -> u64 {
-    let start = SystemTime::now();
-    let since_the_epoch = start
+pub fn get_current_millis() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards");
-
-    since_the_epoch.as_secs()
+        .unwrap_or_default()
+        .as_millis() as u64
 }

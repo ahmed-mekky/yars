@@ -1,4 +1,4 @@
-use crate::{resp::Frame, utils::get_current_unix_timestamp};
+use crate::{resp::Frame, utils::get_current_millis};
 use anyhow::Result;
 use tokio_util::bytes::Bytes;
 
@@ -53,12 +53,7 @@ impl Command {
             _ => return Err(Frame::Error("ERR missing value".into())),
         };
 
-        let exp = match input.len() {
-            3 => Expiry::None,
-            4 | 5 => Self::parse_exp(input)?,
-            _ => return Err(Frame::Error("ERR invalid number of arguments".into())),
-        };
-
+        let exp = Self::parse_exp(input)?;
         Ok(Command::Set {
             key,
             entry: Entry { value, exp },
@@ -83,7 +78,7 @@ impl Command {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
 
-                Ok(Expiry::At(get_current_unix_timestamp() + secs))
+                Ok(Expiry::At(get_current_millis() + secs * 1000))
             }
             b"PX" => {
                 let Some(Frame::BulkString(bytes)) = input.get(4) else {
@@ -97,7 +92,7 @@ impl Command {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
 
-                Ok(Expiry::At(get_current_unix_timestamp() + msecs))
+                Ok(Expiry::At(get_current_millis() + msecs))
             }
             b"EXACT" => {
                 let Some(Frame::BulkString(bytes)) = input.get(4) else {

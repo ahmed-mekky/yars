@@ -1,6 +1,6 @@
 use crate::db::Db;
 use crate::resp::{Command, Expiry, Frame, RespCodec};
-use crate::utils::get_current_unix_timestamp;
+use crate::utils::get_current_millis;
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -42,7 +42,7 @@ impl Connection {
                     dbg!(entry.clone());
                     match entry.exp {
                         Expiry::At(exp) => {
-                            if get_current_unix_timestamp() > exp {
+                            if get_current_millis() > exp {
                                 self.db.forget(&key).await;
                                 Frame::NullBulkString
                             } else {
