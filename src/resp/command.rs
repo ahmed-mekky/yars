@@ -153,3 +153,12 @@ pub enum Expiry {
     At(u64),
     None,
 }
+
+impl Entry {
+    pub fn is_expired(&self, now: u64) -> bool {
+        match self.exp {
+            Expiry::At(exp) => now > exp,
+            _ => false,
+        }
+    }
+}
