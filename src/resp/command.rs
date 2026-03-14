@@ -106,7 +106,11 @@ impl Command {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
 
-                Ok(Expiry::At(secs))
+                if secs * 1000 < get_current_millis() {
+                    return Err(Frame::Error("ERR invalid timestamp".into()));
+                }
+
+                Ok(Expiry::At(secs * 1000))
             }
             b"PXAT" => {
                 let Some(Frame::BulkString(bytes)) = input.get(4) else {
@@ -119,6 +123,10 @@ impl Command {
                     .ok_or_else(|| {
                         Frame::Error("ERR value is not an integer or out of range".into())
                     })?;
+
+                if msecs < get_current_millis() {
+                    return Err(Frame::Error("ERR invalid timestamp".into()));
+                }
 
                 Ok(Expiry::At(msecs))
             }
