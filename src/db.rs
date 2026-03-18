@@ -59,4 +59,13 @@ impl Db {
             .filter(|(_, v)| !v.is_expired(get_current_millis()))
             .count() as i64
     }
+
+    pub async fn mget(&self, keys: &[Bytes]) -> Vec<Option<Entry>> {
+        let now = get_current_millis();
+
+        let map = self.0.read().await;
+        keys.iter()
+            .map(|k| map.get(k).filter(|v| !v.is_expired(now)).cloned())
+            .collect()
+    }
 }

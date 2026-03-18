@@ -50,6 +50,19 @@ impl Connection {
             Command::Del { keys } => Frame::Integer(self.db.del(&keys).await),
 
             Command::Exists { keys } => Frame::Integer(self.db.exists(&keys).await),
+
+            Command::MGet { keys } => Frame::Array(
+                self.db
+                    .mget(&keys)
+                    .await
+                    .iter()
+                    .cloned()
+                    .map(|e| match e {
+                        Some(entry) => Frame::BulkString(entry.value),
+                        None => Frame::NullBulkString,
+                    })
+                    .collect(),
+            ),
         }
     }
 }

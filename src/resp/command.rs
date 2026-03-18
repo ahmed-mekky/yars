@@ -8,6 +8,7 @@ pub enum Command {
     Set { key: Bytes, entry: Entry },
     Del { keys: Vec<Bytes> },
     Exists { keys: Vec<Bytes> },
+    MGet { keys: Vec<Bytes> },
 }
 
 impl TryFrom<Frame> for Command {
@@ -26,6 +27,7 @@ impl TryFrom<Frame> for Command {
             b"SET" => Self::parse_set(parts),
             b"DEL" => Self::parse_del(parts),
             b"EXISTS" => Self::parse_exists(parts),
+            b"MGET" => Self::parse_mget(parts),
             _ => Err(Frame::Error("ERR unknown command {}".into())),
         }
     }
@@ -153,7 +155,7 @@ impl Command {
     fn parse_exists(input: Vec<Frame>) -> Result<Command, Frame> {
         let keys = input
             .get(1..)
-            .ok_or(Frame::Error("ERR missingkey".into()))?
+            .ok_or(Frame::Error("ERR missing key".into()))?
             .iter()
             .filter_map(|key| match key {
                 Frame::BulkString(key) => Some(Bytes::copy_from_slice(key)),
@@ -161,6 +163,19 @@ impl Command {
             })
             .collect();
         Ok(Command::Exists { keys })
+    }
+
+    fn parse_mget(input: Vec<Frame>) -> Result<Command, Frame> {
+        let keys = input
+            .get(1..)
+            .ok_or(Frame::Error("ERR missing key".into()))?
+            .iter()
+            .filter_map(|key| match key {
+                Frame::BulkString(key) => Some(Bytes::copy_from_slice(key)),
+                _ => None,
+            })
+            .collect();
+        Ok(Command::MGet { keys })
     }
 }
 
