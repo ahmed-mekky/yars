@@ -10,6 +10,8 @@ pub enum Command {
     Exists { keys: Vec<Bytes> },
     MGet { keys: Vec<Bytes> },
     MSet { items: Vec<(Bytes, Bytes)> },
+    Ttl { key: Bytes },
+    Pttl { key: Bytes },
 }
 
 impl TryFrom<Frame> for Command {
@@ -30,6 +32,8 @@ impl TryFrom<Frame> for Command {
             b"EXISTS" => Self::parse_exists(parts),
             b"MGET" => Self::parse_mget(parts),
             b"MSET" => Self::parse_mset(parts),
+            b"TTL" => Self::parse_ttl(parts),
+            b"PTTL" => Self::parse_pttl(parts),
             _ => Err(Frame::Error("ERR unknown command {}".into())),
         }
     }
@@ -197,6 +201,24 @@ impl Command {
             items.push((key, value));
         }
         Ok(Command::MSet { items })
+    }
+
+    fn parse_ttl(input: Vec<Frame>) -> Result<Command, Frame> {
+        let Some(Frame::BulkString(key)) = input.get(1) else {
+            return Err(Frame::Error("Err missing key".into()));
+        };
+        Ok(Command::Ttl {
+            key: Bytes::copy_from_slice(key),
+        })
+    }
+
+    fn parse_pttl(input: Vec<Frame>) -> Result<Command, Frame> {
+        let Some(Frame::BulkString(key)) = input.get(1) else {
+            return Err(Frame::Error("Err missing key".into()));
+        };
+        Ok(Command::Pttl {
+            key: Bytes::copy_from_slice(key),
+        })
     }
 }
 

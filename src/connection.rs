@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::resp::{Command, Frame, RespCodec};
+use crate::resp::{Command, Expiry, Frame, RespCodec};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -67,6 +67,34 @@ impl Connection {
             Command::MSet { items } => {
                 self.db.mset(&items).await;
                 Frame::SimpleString("OK".into())
+            }
+
+            Command::Ttl { key } => {
+                let now = crate::utils::get_current_millis();
+                match self.db.get(&key).await {
+                    None => Frame::Integer(-2),
+                    Some(entry) => match entry.exp {
+                        Expiry::At(exp) => {
+                            let ttl = exp.saturating_sub(now);
+                            Frame::Integer((ttl / 1000) as i64)
+                        }
+                        Expiry::None | Expiry::Keep => Frame::Integer(-1),
+                    },
+                }
+            }
+
+            Command::Pttl { key } => {
+                let now = crate::utils::get_current_millis();
+                match self.db.get(&key).await {
+                    None => Frame::Integer(-2),
+                    Some(entry) => match entry.exp {
+                        Expiry::At(exp) => {
+                            let ttl = exp.saturating_sub(now);
+                            Frame::Integer(ttl as i64)
+                        }
+                        Expiry::None | Expiry::Keep => Frame::Integer(-1),
+                    },
+                }
             }
         }
     }
