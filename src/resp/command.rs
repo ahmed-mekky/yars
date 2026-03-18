@@ -7,6 +7,7 @@ pub enum Command {
     Get { key: Bytes },
     Set { key: Bytes, entry: Entry },
     Del { keys: Vec<Bytes> },
+    Exists { keys: Vec<Bytes> },
 }
 
 impl TryFrom<Frame> for Command {
@@ -24,6 +25,7 @@ impl TryFrom<Frame> for Command {
             b"GET" => Self::parse_get(parts),
             b"SET" => Self::parse_set(parts),
             b"DEL" => Self::parse_del(parts),
+            b"EXISTS" => Self::parse_exists(parts),
             _ => Err(Frame::Error("ERR unknown command {}".into())),
         }
     }
@@ -146,6 +148,19 @@ impl Command {
             })
             .collect();
         Ok(Command::Del { keys })
+    }
+
+    fn parse_exists(input: Vec<Frame>) -> Result<Command, Frame> {
+        let keys = input
+            .get(1..)
+            .ok_or(Frame::Error("ERR missingkey".into()))?
+            .iter()
+            .filter_map(|key| match key {
+                Frame::BulkString(key) => Some(Bytes::copy_from_slice(key)),
+                _ => None,
+            })
+            .collect();
+        Ok(Command::Exists { keys })
     }
 }
 

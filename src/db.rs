@@ -49,4 +49,14 @@ impl Db {
         let mut map = self.0.write().await;
         keys.iter().filter(|k| map.remove(*k).is_some()).count() as i64
     }
+
+    pub async fn exists(&self, keys: &[Bytes]) -> i64 {
+        self.0
+            .read()
+            .await
+            .iter()
+            .filter(|(k, _)| keys.contains(k))
+            .filter(|(_, v)| !v.is_expired(get_current_millis()))
+            .count() as i64
+    }
 }
