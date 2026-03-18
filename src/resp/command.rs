@@ -9,6 +9,7 @@ pub enum Command {
     Del { keys: Vec<Bytes> },
     Exists { keys: Vec<Bytes> },
     MGet { keys: Vec<Bytes> },
+    MSet { items: Vec<(Bytes, Bytes)> },
 }
 
 impl TryFrom<Frame> for Command {
@@ -28,6 +29,7 @@ impl TryFrom<Frame> for Command {
             b"DEL" => Self::parse_del(parts),
             b"EXISTS" => Self::parse_exists(parts),
             b"MGET" => Self::parse_mget(parts),
+            b"MSET" => Self::parse_mset(parts),
             _ => Err(Frame::Error("ERR unknown command {}".into())),
         }
     }
@@ -176,6 +178,25 @@ impl Command {
             })
             .collect();
         Ok(Command::MGet { keys })
+    }
+
+    fn parse_mset(input: Vec<Frame>) -> Result<Command, Frame> {
+        if input.len() < 3 || input.len().is_multiple_of(2) {
+            return Err(Frame::Error("ERR wrong number of arguments".into()));
+        }
+        let mut items = Vec::with_capacity((input.len() - 1) / 2);
+        for chunk in input[1..].chunks_exact(2) {
+            let key = match &chunk[0] {
+                Frame::BulkString(b) => Bytes::copy_from_slice(b),
+                _ => return Err(Frame::Error("ERR syntax error".into())),
+            };
+            let value = match &chunk[1] {
+                Frame::BulkString(b) => b.clone(),
+                _ => return Err(Frame::Error("ERR syntax error".into())),
+            };
+            items.push((key, value));
+        }
+        Ok(Command::MSet { items })
     }
 }
 

@@ -68,4 +68,17 @@ impl Db {
             .map(|k| map.get(k).filter(|v| !v.is_expired(now)).cloned())
             .collect()
     }
+
+    pub async fn mset(&self, items: &[(Bytes, Bytes)]) {
+        let mut map = self.0.write().await;
+        for (key, value) in items {
+            map.insert(
+                key.clone(),
+                Entry {
+                    value: value.clone(),
+                    exp: Expiry::None,
+                },
+            );
+        }
+    }
 }

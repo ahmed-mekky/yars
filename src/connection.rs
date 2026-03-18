@@ -63,6 +63,11 @@ impl Connection {
                     })
                     .collect(),
             ),
+
+            Command::MSet { items } => {
+                self.db.mset(&items).await;
+                Frame::SimpleString("OK".into())
+            }
         }
     }
 }
