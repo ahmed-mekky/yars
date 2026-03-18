@@ -94,7 +94,7 @@ impl Command {
 
                 Ok(Expiry::At(get_current_millis() + msecs))
             }
-            b"EXACT" => {
+            b"EXAT" => {
                 let Some(Frame::BulkString(bytes)) = input.get(4) else {
                     return Err(Frame::Error("ERR syntax error".into()));
                 };
