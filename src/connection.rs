@@ -96,6 +96,37 @@ impl Connection {
                     },
                 }
             }
+
+            Command::Persist { key } => {
+                if let Some(mut entry) = self.db.get(&key).await
+                    && let Expiry::At(_) = entry.exp
+                {
+                    entry.exp = Expiry::None;
+                    self.db.set(key, entry).await;
+                    return Frame::Integer(1);
+                }
+                Frame::Integer(0)
+            }
+
+            Command::Expire { key, ttl } => {
+                let now = crate::utils::get_current_millis();
+                if let Some(mut entry) = self.db.get(&key).await {
+                    entry.exp = Expiry::At(now.saturating_add(ttl));
+                    self.db.set(key, entry).await;
+                    return Frame::Integer(1);
+                }
+                Frame::Integer(0)
+            }
+
+            Command::PExpire { key, ttl } => {
+                let now = crate::utils::get_current_millis();
+                if let Some(mut entry) = self.db.get(&key).await {
+                    entry.exp = Expiry::At(now.saturating_add(ttl));
+                    self.db.set(key, entry).await;
+                    return Frame::Integer(1);
+                }
+                Frame::Integer(0)
+            }
         }
     }
 }

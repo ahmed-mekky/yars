@@ -12,6 +12,9 @@ pub enum Command {
     MSet { items: Vec<(Bytes, Bytes)> },
     Ttl { key: Bytes },
     Pttl { key: Bytes },
+    Persist { key: Bytes },
+    Expire { key: Bytes, ttl: u64 },
+    PExpire { key: Bytes, ttl: u64 },
 }
 
 impl TryFrom<Frame> for Command {
@@ -34,6 +37,9 @@ impl TryFrom<Frame> for Command {
             b"MSET" => Self::parse_mset(parts),
             b"TTL" => Self::parse_ttl(parts),
             b"PTTL" => Self::parse_pttl(parts),
+            b"PERSIST" => Self::parse_persist(parts),
+            b"EXPIRE" => Self::parse_expire(parts),
+            b"PEXPIRE" => Self::parse_pexpire(parts),
             _ => Err(Frame::Error("ERR unknown command {}".into())),
         }
     }
@@ -219,6 +225,58 @@ impl Command {
         Ok(Command::Pttl {
             key: Bytes::copy_from_slice(key),
         })
+    }
+
+    fn parse_persist(input: Vec<Frame>) -> Result<Command, Frame> {
+        let Some(Frame::BulkString(key)) = input.get(1) else {
+            return Err(Frame::Error("Err missing key".into()));
+        };
+        Ok(Command::Persist {
+            key: Bytes::copy_from_slice(key),
+        })
+    }
+
+    fn parse_expire(parts: Vec<Frame>) -> std::result::Result<Command, Frame> {
+        if parts.len() < 2 {
+            return Err(Frame::Error("ERR wrong number of arguments".into()));
+        }
+        let key = match parts.get(1) {
+            Some(Frame::BulkString(b)) => Bytes::copy_from_slice(b),
+            _ => return Err(Frame::Error("ERR syntax error".into())),
+        };
+        let bytes = match parts.get(2) {
+            Some(Frame::BulkString(t)) => t,
+            _ => return Err(Frame::Error("ERR syntax error".into())),
+        };
+
+        let ttl = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or_else(|| Frame::Error("ERR value is not an integer or out of range".into()))?
+            * 1000;
+
+        Ok(Command::Expire { key, ttl })
+    }
+
+    fn parse_pexpire(parts: Vec<Frame>) -> std::result::Result<Command, Frame> {
+        if parts.len() < 2 {
+            return Err(Frame::Error("ERR wrong number of arguments".into()));
+        }
+        let key = match parts.get(1) {
+            Some(Frame::BulkString(b)) => Bytes::copy_from_slice(b),
+            _ => return Err(Frame::Error("ERR syntaxerror".into())),
+        };
+        let bytes = match parts.get(2) {
+            Some(Frame::BulkString(t)) => t,
+            _ => return Err(Frame::Error("ERR syntax error".into())),
+        };
+
+        let ttl = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or_else(|| Frame::Error("ERR value is not an integer or out of range".into()))?;
+
+        Ok(Command::PExpire { key, ttl })
     }
 }
 
