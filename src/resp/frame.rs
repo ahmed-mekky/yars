@@ -9,7 +9,7 @@ use nom::{
 };
 use tokio_util::bytes::Bytes;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Frame {
     SimpleString(String),
     Error(String),
@@ -146,27 +146,6 @@ impl From<&Frame> for Bytes {
                 Bytes::from(bytes)
             }
             Frame::NullArray => Bytes::from_static(b"*-1\r\n"),
-        }
-    }
-}
-
-#[cfg(debug_assertions)]
-impl std::fmt::Display for Frame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Frame::SimpleString(s) => write!(f, "SimpleString({})", s),
-            Frame::Error(e) => write!(f, "Error({})", e),
-            Frame::Integer(i) => write!(f, "Integer({})", i),
-            Frame::BulkString(s) => write!(f, "BulkString({:?})", s),
-            Frame::NullBulkString => write!(f, "NullBulkString"),
-            Frame::Array(a) => {
-                f.write_str("Array(\n")?;
-                for item in a.iter() {
-                    writeln!(f, "{}", item)?;
-                }
-                f.write_str(")")
-            }
-            Frame::NullArray => write!(f, "NullArray"),
         }
     }
 }
