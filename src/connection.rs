@@ -35,41 +35,40 @@ impl Connection {
 
     async fn execute(&self, cmd: Command) -> Frame {
         match cmd {
-            Command::Ping => Frame::SimpleString("PONG".into()),
+            Command::PING => Frame::SimpleString("PONG".into()),
 
-            Command::Get { key } => match self.db.get(&key).await {
+            Command::GET { key } => match self.db.get(&key).await {
                 Some(entry) => Frame::BulkString(entry.value),
                 None => Frame::NullBulkString,
             },
 
-            Command::Set { key, entry } => {
+            Command::SET { key, entry } => {
                 self.db.set(key, entry).await;
                 Frame::SimpleString("OK".into())
             }
 
-            Command::Del { keys } => Frame::Integer(self.db.del(&keys).await),
+            Command::DEL { keys } => Frame::Integer(self.db.del(&keys).await),
 
-            Command::Exists { keys } => Frame::Integer(self.db.exists(&keys).await),
+            Command::EXISTS { keys } => Frame::Integer(self.db.exists(&keys).await),
 
-            Command::MGet { keys } => Frame::Array(
+            Command::MGET { keys } => Frame::Array(
                 self.db
                     .mget(&keys)
                     .await
                     .iter()
-                    .cloned()
                     .map(|e| match e {
-                        Some(entry) => Frame::BulkString(entry.value),
+                        Some(entry) => Frame::BulkString(entry.value.clone()),
                         None => Frame::NullBulkString,
                     })
                     .collect(),
             ),
 
-            Command::MSet { items } => {
+            Command::MSET { items } => {
                 self.db.mset(&items).await;
                 Frame::SimpleString("OK".into())
             }
 
-            Command::Ttl { key } => {
+            Command::TTL { key } => {
                 let now = crate::utils::get_current_millis();
                 match self.db.get(&key).await {
                     None => Frame::Integer(-2),
@@ -83,7 +82,7 @@ impl Connection {
                 }
             }
 
-            Command::Pttl { key } => {
+            Command::PTTL { key } => {
                 let now = crate::utils::get_current_millis();
                 match self.db.get(&key).await {
                     None => Frame::Integer(-2),
@@ -97,7 +96,7 @@ impl Connection {
                 }
             }
 
-            Command::Persist { key } => {
+            Command::PERSIST { key } => {
                 if let Some(mut entry) = self.db.get(&key).await
                     && let Expiry::At(_) = entry.exp
                 {
@@ -108,7 +107,7 @@ impl Connection {
                 Frame::Integer(0)
             }
 
-            Command::Expire { key, ttl } => {
+            Command::EXPIRE { key, ttl } => {
                 let now = crate::utils::get_current_millis();
                 if let Some(mut entry) = self.db.get(&key).await {
                     entry.exp = Expiry::At(now.saturating_add(ttl));
@@ -118,7 +117,7 @@ impl Connection {
                 Frame::Integer(0)
             }
 
-            Command::PExpire { key, ttl } => {
+            Command::PEXPIRE { key, ttl } => {
                 let now = crate::utils::get_current_millis();
                 if let Some(mut entry) = self.db.get(&key).await {
                     entry.exp = Expiry::At(now.saturating_add(ttl));
@@ -128,11 +127,11 @@ impl Connection {
                 Frame::Integer(0)
             }
 
-            Command::Echo { msg } => Frame::BulkString(msg),
+            Command::ECHO { msg } => Frame::BulkString(msg),
 
-            Command::DbSize => Frame::Integer(self.db.len().await as i64),
+            Command::DBSIZE => Frame::Integer(self.db.len().await as i64),
 
-            Command::FlushDb => {
+            Command::FLUSHDB => {
                 self.db.clear().await;
                 Frame::Integer(1)
             }
