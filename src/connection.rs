@@ -129,6 +129,13 @@ impl Connection {
             }
 
             Command::Echo { msg } => Frame::BulkString(msg),
+
+            Command::DbSize => Frame::Integer(self.db.len().await as i64),
+
+            Command::FlushDb => {
+                self.db.clear().await;
+                Frame::Integer(1)
+            }
         }
     }
 }

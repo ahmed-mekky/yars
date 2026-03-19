@@ -1,5 +1,4 @@
 use crate::{resp::Frame, utils::get_current_millis};
-use anyhow::Result;
 use tokio_util::bytes::Bytes;
 
 pub enum Command {
@@ -16,6 +15,8 @@ pub enum Command {
     Expire { key: Bytes, ttl: u64 },
     PExpire { key: Bytes, ttl: u64 },
     Echo { msg: Bytes },
+    DbSize,
+    FlushDb,
 }
 
 impl TryFrom<Frame> for Command {
@@ -29,7 +30,9 @@ impl TryFrom<Frame> for Command {
             return Err(Frame::Error("ERR missing command".into()));
         };
         match cmd.to_ascii_uppercase().as_slice() {
-            b"PING" => Self::parse_ping(),
+            b"PING" => Ok(Command::Ping),
+            b"DBSIZE" => Ok(Command::DbSize),
+            b"FLUSHDB" => Ok(Command::FlushDb),
             b"GET" => Self::parse_get(parts),
             b"SET" => Self::parse_set(parts),
             b"DEL" => Self::parse_del(parts),
@@ -42,15 +45,12 @@ impl TryFrom<Frame> for Command {
             b"EXPIRE" => Self::parse_expire(parts),
             b"PEXPIRE" => Self::parse_pexpire(parts),
             b"ECHO" => Self::parse_echo(parts),
-            _ => Err(Frame::Error("ERR unknown command {}".into())),
+            _ => Err(Frame::Error("ERR unknown command".into())),
         }
     }
 }
 
 impl Command {
-    fn parse_ping() -> Result<Command, Frame> {
-        Ok(Command::Ping)
-    }
     fn parse_get(input: Vec<Frame>) -> Result<Command, Frame> {
         let Some(Frame::BulkString(key)) = input.get(1) else {
             return Err(Frame::Error("Err missing key".into()));

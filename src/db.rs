@@ -81,4 +81,11 @@ impl Db {
             );
         }
     }
+
+    pub async fn len(&self) -> usize {
+        self.0.read().await.len()
+    }
+    pub async fn clear(&self) {
+        self.0.write().await.clear();
+    }
 }
