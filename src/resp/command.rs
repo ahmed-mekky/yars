@@ -15,6 +15,7 @@ pub enum Command {
     Persist { key: Bytes },
     Expire { key: Bytes, ttl: u64 },
     PExpire { key: Bytes, ttl: u64 },
+    Echo { msg: Bytes },
 }
 
 impl TryFrom<Frame> for Command {
@@ -40,6 +41,7 @@ impl TryFrom<Frame> for Command {
             b"PERSIST" => Self::parse_persist(parts),
             b"EXPIRE" => Self::parse_expire(parts),
             b"PEXPIRE" => Self::parse_pexpire(parts),
+            b"ECHO" => Self::parse_echo(parts),
             _ => Err(Frame::Error("ERR unknown command {}".into())),
         }
     }
@@ -277,6 +279,15 @@ impl Command {
             .ok_or_else(|| Frame::Error("ERR value is not an integer or out of range".into()))?;
 
         Ok(Command::PExpire { key, ttl })
+    }
+
+    fn parse_echo(parts: Vec<Frame>) -> Result<Command, Frame> {
+        let msg = match parts.get(1) {
+            Some(Frame::BulkString(msg)) => Bytes::copy_from_slice(msg),
+            _ => return Err(Frame::Error("ERR syntax error".into())),
+        };
+
+        Ok(Command::Echo { msg })
     }
 }
 

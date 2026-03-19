@@ -127,6 +127,8 @@ impl Connection {
                 }
                 Frame::Integer(0)
             }
+
+            Command::Echo { msg } => Frame::BulkString(msg),
         }
     }
 }
