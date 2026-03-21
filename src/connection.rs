@@ -36,21 +36,16 @@ impl Connection {
     async fn execute(&self, cmd: Command) -> Frame {
         match cmd {
             Command::PING => Frame::SimpleString("PONG".into()),
-
             Command::GET { key } => match self.db.get(&key).await {
                 Some(entry) => Frame::BulkString(entry.value),
                 None => Frame::NullBulkString,
             },
-
             Command::SET { key, entry } => {
                 self.db.set(key, entry).await;
                 Frame::SimpleString("OK".into())
             }
-
             Command::DEL { keys } => Frame::Integer(self.db.del(&keys).await),
-
             Command::EXISTS { keys } => Frame::Integer(self.db.exists(&keys).await),
-
             Command::MGET { keys } => Frame::Array(
                 self.db
                     .mget(&keys)
@@ -62,12 +57,10 @@ impl Connection {
                     })
                     .collect(),
             ),
-
             Command::MSET { items } => {
                 self.db.mset(&items).await;
                 Frame::SimpleString("OK".into())
             }
-
             Command::TTL { key } => {
                 let now = crate::utils::get_current_millis();
                 match self.db.get(&key).await {
@@ -81,7 +74,6 @@ impl Connection {
                     },
                 }
             }
-
             Command::PTTL { key } => {
                 let now = crate::utils::get_current_millis();
                 match self.db.get(&key).await {
@@ -95,7 +87,6 @@ impl Connection {
                     },
                 }
             }
-
             Command::PERSIST { key } => {
                 if let Some(mut entry) = self.db.get(&key).await
                     && let Expiry::At(_) = entry.exp
@@ -106,7 +97,6 @@ impl Connection {
                 }
                 Frame::Integer(0)
             }
-
             Command::EXPIRE { key, ttl } => {
                 let now = crate::utils::get_current_millis();
                 if let Some(mut entry) = self.db.get(&key).await {
@@ -116,7 +106,6 @@ impl Connection {
                 }
                 Frame::Integer(0)
             }
-
             Command::PEXPIRE { key, ttl } => {
                 let now = crate::utils::get_current_millis();
                 if let Some(mut entry) = self.db.get(&key).await {
@@ -126,16 +115,12 @@ impl Connection {
                 }
                 Frame::Integer(0)
             }
-
             Command::ECHO { msg } => Frame::BulkString(msg),
-
             Command::DBSIZE => Frame::Integer(self.db.len().await as i64),
-
             Command::FLUSHDB => {
                 self.db.clear().await;
                 Frame::Integer(1)
             }
-
             Command::GETDEL { key } => {
                 if let Some(entry) = self.db.get(&key).await {
                     self.db.del(&[key]).await;
@@ -144,7 +129,6 @@ impl Connection {
                     Frame::NullBulkString
                 }
             }
-
             Command::GETSET { key, entry } => {
                 if let Some(existing_entry) = self.db.get(&key).await {
                     self.db.set(key, entry).await;
@@ -154,7 +138,6 @@ impl Connection {
                     Frame::NullBulkString
                 }
             }
-
             Command::SETNX { key, entry } => {
                 if self.db.get(&key).await.is_none() {
                     self.db.set(key, entry).await;
@@ -163,6 +146,8 @@ impl Connection {
                     Frame::Integer(0)
                 }
             }
+            Command::INCR { key } => self.db.incr(key).await,
+            Command::DECR { key } => self.db.decr(key).await,
         }
     }
 }

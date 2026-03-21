@@ -21,6 +21,8 @@ pub enum Command {
     GETDEL { key: Bytes },
     GETSET { key: Bytes, entry: Entry },
     SETNX { key: Bytes, entry: Entry },
+    INCR { key: Bytes },
+    DECR { key: Bytes },
 }
 
 impl TryFrom<Frame> for Command {
@@ -86,6 +88,12 @@ impl TryFrom<Frame> for Command {
             b"SETNX" => Ok(Command::SETNX {
                 key: Self::parse_key(&input)?,
                 entry: Self::parse_entry(&input)?,
+            }),
+            b"INCR" => Ok(Command::INCR {
+                key: Self::parse_key(&input)?,
+            }),
+            b"DECR" => Ok(Command::DECR {
+                key: Self::parse_key(&input)?,
             }),
             _ => Err(Frame::Error("ERR unknown command".into())),
         }

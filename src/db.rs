@@ -3,7 +3,7 @@ use tokio::sync::RwLock;
 use tokio_util::bytes::Bytes;
 
 use crate::{
-    resp::{Entry, Expiry},
+    resp::{Entry, Expiry, Frame},
     utils::get_current_millis,
 };
 
@@ -87,5 +87,37 @@ impl Db {
     }
     pub async fn clear(&self) {
         self.0.write().await.clear();
+    }
+
+    pub async fn incr(&self, key: Bytes) -> Frame {
+        self.step(key, 1).await
+    }
+
+    pub async fn decr(&self, key: Bytes) -> Frame {
+        self.step(key, -1).await
+    }
+
+    async fn step(&self, key: Bytes, delta: i64) -> Frame {
+        let mut entry = match self.get(&key).await {
+            Some(entry) => entry,
+            None => Entry {
+                value: b"0".to_vec().into(),
+                exp: Expiry::None,
+            },
+        };
+        let current = match std::str::from_utf8(&entry.value)
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+        {
+            Some(v) => v,
+            None => return Frame::Error("ERR value is not an integer or out of range".into()),
+        };
+        let next = match current.checked_add(delta) {
+            Some(v) => v,
+            None => return Frame::Error("ERR value is not an integer or out of range".into()),
+        };
+        entry.value = next.to_string().into();
+        self.set(key, entry).await;
+        Frame::Integer(next)
     }
 }
