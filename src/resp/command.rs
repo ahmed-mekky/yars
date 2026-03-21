@@ -53,7 +53,9 @@ impl TryFrom<Frame> for Command {
             b"MGET" => Ok(Command::MGET {
                 keys: Self::parse_keys(&input)?,
             }),
-            b"MSET" => Self::parse_mset(&input),
+            b"MSET" => Ok(Command::MSET {
+                items: Self::parse_items(&input)?,
+            }),
             b"TTL" => Ok(Command::TTL {
                 key: Self::parse_key(&input)?,
             }),
@@ -63,9 +65,17 @@ impl TryFrom<Frame> for Command {
             b"PERSIST" => Ok(Command::PERSIST {
                 key: Self::parse_key(&input)?,
             }),
-            b"EXPIRE" => Self::parse_expire(&input),
-            b"PEXPIRE" => Self::parse_pexpire(&input),
-            b"ECHO" => Self::parse_echo(&input),
+            b"EXPIRE" => Ok(Command::EXPIRE {
+                key: Self::parse_key(&input)?,
+                ttl: Self::parse_ttl(&input)? * 1000,
+            }),
+            b"PEXPIRE" => Ok(Command::PEXPIRE {
+                key: Self::parse_key(&input)?,
+                ttl: Self::parse_ttl(&input)?,
+            }),
+            b"ECHO" => Ok(Command::ECHO {
+                msg: Self::parse_msg(&input)?,
+            }),
             b"GETSET" => Ok(Command::GETSET {
                 key: Self::parse_key(&input)?,
                 entry: Self::parse_entry(&input)?,
@@ -187,7 +197,7 @@ impl Command {
         }
     }
 
-    fn parse_mset(input: &[Frame]) -> Result<Command, Frame> {
+    fn parse_items(input: &[Frame]) -> Result<Vec<(Bytes, Bytes)>, Frame> {
         if input.len() < 3 || input.len().is_multiple_of(2) {
             return Err(Frame::Error("ERR wrong number of arguments".into()));
         }
@@ -203,39 +213,10 @@ impl Command {
             };
             items.push((key, value));
         }
-        Ok(Command::MSET { items })
+        Ok(items)
     }
 
-    fn parse_expire(input: &[Frame]) -> std::result::Result<Command, Frame> {
-        if input.len() < 2 {
-            return Err(Frame::Error("ERR wrong number of arguments".into()));
-        }
-        let key = match input.get(1) {
-            Some(Frame::BulkString(b)) => Bytes::copy_from_slice(b),
-            _ => return Err(Frame::Error("ERR syntax error".into())),
-        };
-        let bytes = match input.get(2) {
-            Some(Frame::BulkString(t)) => t,
-            _ => return Err(Frame::Error("ERR syntax error".into())),
-        };
-
-        let ttl = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .ok_or_else(|| Frame::Error("ERR value is not an integer or out of range".into()))?
-            * 1000;
-
-        Ok(Command::EXPIRE { key, ttl })
-    }
-
-    fn parse_pexpire(input: &[Frame]) -> std::result::Result<Command, Frame> {
-        if input.len() < 2 {
-            return Err(Frame::Error("ERR wrong number of arguments".into()));
-        }
-        let key = match input.get(1) {
-            Some(Frame::BulkString(b)) => Bytes::copy_from_slice(b),
-            _ => return Err(Frame::Error("ERR syntax error".into())),
-        };
+    fn parse_ttl(input: &[Frame]) -> Result<u64, Frame> {
         let bytes = match input.get(2) {
             Some(Frame::BulkString(t)) => t,
             _ => return Err(Frame::Error("ERR syntax error".into())),
@@ -245,17 +226,15 @@ impl Command {
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .ok_or_else(|| Frame::Error("ERR value is not an integer or out of range".into()))?;
-
-        Ok(Command::PEXPIRE { key, ttl })
+        Ok(ttl)
     }
 
-    fn parse_echo(input: &[Frame]) -> Result<Command, Frame> {
+    fn parse_msg(input: &[Frame]) -> Result<Bytes, Frame> {
         let msg = match input.get(1) {
             Some(Frame::BulkString(msg)) => Bytes::copy_from_slice(msg),
             _ => return Err(Frame::Error("ERR syntax error".into())),
         };
-
-        Ok(Command::ECHO { msg })
+        Ok(msg)
     }
 }
 
