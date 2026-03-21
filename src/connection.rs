@@ -135,6 +135,34 @@ impl Connection {
                 self.db.clear().await;
                 Frame::Integer(1)
             }
+
+            Command::GETDEL { key } => {
+                if let Some(entry) = self.db.get(&key).await {
+                    self.db.del(&[key]).await;
+                    Frame::BulkString(entry.value)
+                } else {
+                    Frame::NullBulkString
+                }
+            }
+
+            Command::GETSET { key, entry } => {
+                if let Some(existing_entry) = self.db.get(&key).await {
+                    self.db.set(key, entry).await;
+                    Frame::BulkString(existing_entry.value)
+                } else {
+                    self.db.set(key, entry).await;
+                    Frame::NullBulkString
+                }
+            }
+
+            Command::SETNX { key, entry } => {
+                if self.db.get(&key).await.is_none() {
+                    self.db.set(key, entry).await;
+                    Frame::Integer(1)
+                } else {
+                    Frame::Integer(0)
+                }
+            }
         }
     }
 }

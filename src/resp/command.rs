@@ -18,6 +18,9 @@ pub enum Command {
     ECHO { msg: Bytes },
     DBSIZE,
     FLUSHDB,
+    GETDEL { key: Bytes },
+    GETSET { key: Bytes, entry: Entry },
+    SETNX { key: Bytes, entry: Entry },
 }
 
 impl TryFrom<Frame> for Command {
@@ -35,45 +38,59 @@ impl TryFrom<Frame> for Command {
             b"DBSIZE" => Ok(Command::DBSIZE),
             b"FLUSHDB" => Ok(Command::FLUSHDB),
             b"GET" => Ok(Command::GET {
-                key: Self::parse_key(input)?,
+                key: Self::parse_key(&input)?,
             }),
-            b"SET" => Self::parse_set(input),
+            b"SET" => Ok(Command::SET {
+                key: Self::parse_key(&input)?,
+                entry: Self::parse_entry(&input)?,
+            }),
             b"DEL" => Ok(Command::DEL {
-                keys: Self::parse_keys(input)?,
+                keys: Self::parse_keys(&input)?,
             }),
             b"EXISTS" => Ok(Command::EXISTS {
-                keys: Self::parse_keys(input)?,
+                keys: Self::parse_keys(&input)?,
             }),
             b"MGET" => Ok(Command::MGET {
-                keys: Self::parse_keys(input)?,
+                keys: Self::parse_keys(&input)?,
             }),
-            b"MSET" => Self::parse_mset(input),
+            b"MSET" => Self::parse_mset(&input),
             b"TTL" => Ok(Command::TTL {
-                key: Self::parse_key(input)?,
+                key: Self::parse_key(&input)?,
             }),
             b"PTTL" => Ok(Command::PTTL {
-                key: Self::parse_key(input)?,
+                key: Self::parse_key(&input)?,
             }),
             b"PERSIST" => Ok(Command::PERSIST {
-                key: Self::parse_key(input)?,
+                key: Self::parse_key(&input)?,
             }),
-            b"EXPIRE" => Self::parse_expire(input),
-            b"PEXPIRE" => Self::parse_pexpire(input),
-            b"ECHO" => Self::parse_echo(input),
+            b"EXPIRE" => Self::parse_expire(&input),
+            b"PEXPIRE" => Self::parse_pexpire(&input),
+            b"ECHO" => Self::parse_echo(&input),
+            b"GETSET" => Ok(Command::GETSET {
+                key: Self::parse_key(&input)?,
+                entry: Self::parse_entry(&input)?,
+            }),
+            b"GETDEL" => Ok(Command::GETDEL {
+                key: Self::parse_key(&input)?,
+            }),
+            b"SETNX" => Ok(Command::SETNX {
+                key: Self::parse_key(&input)?,
+                entry: Self::parse_entry(&input)?,
+            }),
             _ => Err(Frame::Error("ERR unknown command".into())),
         }
     }
 }
 
 impl Command {
-    fn parse_key(input: Vec<Frame>) -> Result<Bytes, Frame> {
+    fn parse_key(input: &[Frame]) -> Result<Bytes, Frame> {
         let Some(Frame::BulkString(key)) = input.get(1) else {
             return Err(Frame::Error("Err missing key".into()));
         };
         Ok(Bytes::copy_from_slice(key))
     }
 
-    fn parse_keys(input: Vec<Frame>) -> Result<Vec<Bytes>, Frame> {
+    fn parse_keys(input: &[Frame]) -> Result<Vec<Bytes>, Frame> {
         Ok(input
             .get(1..)
             .ok_or(Frame::Error("ERR missing key".into()))?
@@ -85,25 +102,17 @@ impl Command {
             .collect())
     }
 
-    fn parse_set(input: Vec<Frame>) -> Result<Command, Frame> {
-        let key = match input.get(1) {
-            Some(Frame::BulkString(b)) => b.clone(),
-            _ => return Err(Frame::Error("ERR missing key".into())),
-        };
-
+    fn parse_entry(input: &[Frame]) -> Result<Entry, Frame> {
         let value = match input.get(2) {
             Some(Frame::BulkString(b)) => b.clone(),
             _ => return Err(Frame::Error("ERR missing value".into())),
         };
 
         let exp = Self::parse_exp(input)?;
-        Ok(Command::SET {
-            key,
-            entry: Entry { value, exp },
-        })
+        Ok(Entry { value, exp })
     }
 
-    fn parse_exp(input: Vec<Frame>) -> Result<Expiry, Frame> {
+    fn parse_exp(input: &[Frame]) -> Result<Expiry, Frame> {
         let Some(Frame::BulkString(sub_command)) = input.get(3) else {
             return Ok(Expiry::None);
         };
@@ -178,7 +187,7 @@ impl Command {
         }
     }
 
-    fn parse_mset(input: Vec<Frame>) -> Result<Command, Frame> {
+    fn parse_mset(input: &[Frame]) -> Result<Command, Frame> {
         if input.len() < 3 || input.len().is_multiple_of(2) {
             return Err(Frame::Error("ERR wrong number of arguments".into()));
         }
@@ -197,7 +206,7 @@ impl Command {
         Ok(Command::MSET { items })
     }
 
-    fn parse_expire(input: Vec<Frame>) -> std::result::Result<Command, Frame> {
+    fn parse_expire(input: &[Frame]) -> std::result::Result<Command, Frame> {
         if input.len() < 2 {
             return Err(Frame::Error("ERR wrong number of arguments".into()));
         }
@@ -219,7 +228,7 @@ impl Command {
         Ok(Command::EXPIRE { key, ttl })
     }
 
-    fn parse_pexpire(input: Vec<Frame>) -> std::result::Result<Command, Frame> {
+    fn parse_pexpire(input: &[Frame]) -> std::result::Result<Command, Frame> {
         if input.len() < 2 {
             return Err(Frame::Error("ERR wrong number of arguments".into()));
         }
@@ -240,7 +249,7 @@ impl Command {
         Ok(Command::PEXPIRE { key, ttl })
     }
 
-    fn parse_echo(input: Vec<Frame>) -> Result<Command, Frame> {
+    fn parse_echo(input: &[Frame]) -> Result<Command, Frame> {
         let msg = match input.get(1) {
             Some(Frame::BulkString(msg)) => Bytes::copy_from_slice(msg),
             _ => return Err(Frame::Error("ERR syntax error".into())),
