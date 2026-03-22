@@ -1,9 +1,10 @@
 use crate::db::Db;
-use crate::resp::{Command, Expiry, Frame, RespCodec};
+use crate::resp::{Command, Entry, Expiry, Frame, RespCodec};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Decoder, Framed};
 
 pub struct Connection {
@@ -148,6 +149,30 @@ impl Connection {
             }
             Command::INCR { key } => self.db.incr(key).await,
             Command::DECR { key } => self.db.decr(key).await,
+            Command::STRLEN { key } => {
+                if let Some(entry) = self.db.get(&key).await {
+                    Frame::Integer(entry.value.len() as i64)
+                } else {
+                    Frame::Integer(0)
+                }
+            }
+            Command::APPEND { key, value } => {
+                if let Some(mut entry) = self.db.get(&key).await {
+                    let len = entry.value.len();
+                    let combined = [entry.value, value].concat();
+                    entry.value = Bytes::copy_from_slice(&combined);
+                    self.db.set(key, entry).await;
+                    Frame::Integer(len as i64)
+                } else {
+                    let len = value.len();
+                    let entry = Entry {
+                        value,
+                        exp: Expiry::None,
+                    };
+                    self.db.set(key, entry).await;
+                    Frame::Integer(len as i64)
+                }
+            }
         }
     }
 }

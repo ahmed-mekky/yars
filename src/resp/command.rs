@@ -23,6 +23,8 @@ pub enum Command {
     SETNX { key: Bytes, entry: Entry },
     INCR { key: Bytes },
     DECR { key: Bytes },
+    STRLEN { key: Bytes },
+    APPEND { key: Bytes, value: Bytes },
 }
 
 impl TryFrom<Frame> for Command {
@@ -95,6 +97,13 @@ impl TryFrom<Frame> for Command {
             b"DECR" => Ok(Command::DECR {
                 key: Self::parse_key(&input)?,
             }),
+            b"STRLEN" => Ok(Command::STRLEN {
+                key: Self::parse_key(&input)?,
+            }),
+            b"APPEND" => Ok(Command::APPEND {
+                key: Self::parse_key(&input)?,
+                value: Self::parse_value(&input)?,
+            }),
             _ => Err(Frame::Error("ERR unknown command".into())),
         }
     }
@@ -128,6 +137,15 @@ impl Command {
 
         let exp = Self::parse_exp(input)?;
         Ok(Entry { value, exp })
+    }
+
+    fn parse_value(input: &[Frame]) -> Result<Bytes, Frame> {
+        let value = match input.get(2) {
+            Some(Frame::BulkString(b)) => b.clone(),
+            _ => return Err(Frame::Error("ERR missing value".into())),
+        };
+
+        Ok(value)
     }
 
     fn parse_exp(input: &[Frame]) -> Result<Expiry, Frame> {
