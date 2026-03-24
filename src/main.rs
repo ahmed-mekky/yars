@@ -1,11 +1,5 @@
-mod connection;
-mod db;
-mod resp;
-mod server;
-mod utils;
-
 use anyhow::Result;
-use server::Server;
+use yars::net::server::Server;
 
 #[tokio::main]
 async fn main() -> Result<()> {

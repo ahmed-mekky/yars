@@ -43,9 +43,11 @@ impl Frame {
             Err(e) => Err(anyhow!("Parse error: {}", e)),
         }
     }
+
     fn parse_raw_buffer<'a>(buf: &'a [u8], prefix: &'a str) -> nom::IResult<&'a [u8], &'a [u8]> {
         preceded(tag(prefix), terminated(take_until("\r\n"), line_ending)).parse(buf)
     }
+
     fn parse_simple_string(buf: &[u8]) -> nom::IResult<&[u8], Frame> {
         map_res(
             |b| Self::parse_raw_buffer(b, "+"),
@@ -53,6 +55,7 @@ impl Frame {
         )
         .parse(buf)
     }
+
     fn parse_integer(buf: &[u8]) -> nom::IResult<&[u8], Frame> {
         map_res(
             |b| Self::parse_raw_buffer(b, ":"),
@@ -60,6 +63,7 @@ impl Frame {
         )
         .parse(buf)
     }
+
     fn parse_error(buf: &[u8]) -> nom::IResult<&[u8], Frame> {
         map_res(
             |b| Self::parse_raw_buffer(b, "-"),
@@ -67,6 +71,7 @@ impl Frame {
         )
         .parse(buf)
     }
+
     fn parse_bulk_string(buf: &[u8]) -> nom::IResult<&[u8], Frame> {
         let (remaining, len_bytes) = preceded(tag("$"), take_until("\r\n")).parse(buf)?;
         let len: i32 = btoi(len_bytes).map_err(|_| {
@@ -89,6 +94,7 @@ impl Frame {
 
         Ok((remaining, Frame::BulkString(Bytes::copy_from_slice(data))))
     }
+
     fn parse_array(buf: &[u8]) -> nom::IResult<&[u8], Frame> {
         let (mut remaining, len_bytes) = preceded(tag("*"), take_until("\r\n")).parse(buf)?;
         let len: i32 = btoi(len_bytes).map_err(|_| {
@@ -97,6 +103,11 @@ impl Frame {
                 nom::error::ErrorKind::Digit,
             ))
         })?;
+
+        if len == -1 {
+            let (remaining, _) = crlf(remaining)?;
+            return Ok((remaining, Frame::NullArray));
+        }
 
         let (rem, _) = crlf(remaining)?;
         remaining = rem;
@@ -122,9 +133,11 @@ impl Frame {
             array.push(frame);
             remaining = rem;
         }
+
         Ok((remaining, Frame::Array(array)))
     }
 }
+
 impl From<&Frame> for Bytes {
     fn from(value: &Frame) -> Self {
         match value {
@@ -140,7 +153,7 @@ impl From<&Frame> for Bytes {
             Frame::NullBulkString => Bytes::from_static(b"$-1\r\n"),
             Frame::Array(a) => {
                 let mut bytes = format!("*{}\r\n", a.len()).into_bytes();
-                for item in a.iter() {
+                for item in a {
                     bytes.extend_from_slice(&Bytes::from(item));
                 }
                 Bytes::from(bytes)
