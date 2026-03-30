@@ -21,6 +21,7 @@ impl TryFrom<Frame> for Command {
             b"PING" => Ok(Command::PING),
             b"DBSIZE" => Ok(Command::DBSIZE),
             b"FLUSHDB" => Ok(Command::FLUSHDB),
+            b"INFO" => Ok(Command::INFO),
             b"GET" => Ok(Command::GET {
                 key: parse_key(&input)?,
             }),

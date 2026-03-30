@@ -22,6 +22,7 @@ pub enum Command {
     ECHO { msg: Bytes },
     DBSIZE,
     FLUSHDB,
+    INFO,
     GETDEL { key: Bytes },
     GETSET { key: Bytes, entry: Entry },
     SETNX { key: Bytes, entry: Entry },

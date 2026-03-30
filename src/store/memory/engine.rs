@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -12,13 +14,62 @@ use crate::{
     utils::time::get_current_millis,
 };
 
-#[derive(Default)]
-pub struct MemoryStore(RwLock<HashMap<Bytes, Entry>>);
+pub struct MemoryStore {
+    map: RwLock<HashMap<Bytes, Entry>>,
+    start_time: Instant,
+    commands_processed: AtomicU64,
+    total_memory: AtomicU64,
+}
+
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemoryStore {
+    pub fn new() -> Self {
+        Self {
+            map: RwLock::new(HashMap::new()),
+            start_time: Instant::now(),
+            commands_processed: AtomicU64::new(0),
+            total_memory: AtomicU64::new(0),
+        }
+    }
+
+    pub fn increment_commands(&self) {
+        self.commands_processed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn total_commands(&self) -> u64 {
+        self.commands_processed.load(Ordering::Relaxed)
+    }
+
+    pub fn uptime_seconds(&self) -> u64 {
+        self.start_time.elapsed().as_secs()
+    }
+
+    pub async fn used_memory(&self) -> usize {
+        self.total_memory.load(Ordering::Relaxed) as usize
+    }
+}
 
 #[async_trait]
 impl Store for MemoryStore {
     async fn set(&self, key: Bytes, mut entry: Entry) {
-        let mut map = self.0.write().await;
+        let mut map = self.map.write().await;
+        let old_memory = map
+            .get(&key)
+            .filter(|current| !current.is_expired(get_current_millis()))
+            .map(|e| key.len() + e.value.len())
+            .unwrap_or(0);
+
+        let new_memory = key.len() + entry.value.len();
+        self.total_memory.fetch_add(
+            (new_memory as i64 - old_memory as i64) as u64,
+            Ordering::Relaxed,
+        );
+
         let existing_exp = map
             .get(&key)
             .filter(|current| !current.is_expired(get_current_millis()))
@@ -34,7 +85,7 @@ impl Store for MemoryStore {
     async fn get(&self, key: &Bytes) -> Option<Entry> {
         let now = get_current_millis();
         {
-            let map = self.0.read().await;
+            let map = self.map.read().await;
             match map.get(key) {
                 Some(entry) if !entry.is_expired(now) => return Some(entry.clone()),
                 None => return None,
@@ -42,17 +93,27 @@ impl Store for MemoryStore {
             }
         }
 
-        self.0.write().await.remove(key);
+        self.map.write().await.remove(key);
         None
     }
 
     async fn del(&self, keys: &[Bytes]) -> i64 {
-        let mut map = self.0.write().await;
-        keys.iter().filter(|k| map.remove(*k).is_some()).count() as i64
+        let mut map = self.map.write().await;
+        let mut freed_memory: usize = 0;
+        let mut deleted_count = 0;
+        for key in keys {
+            if let Some(entry) = map.remove(key) {
+                freed_memory += key.len() + entry.value.len();
+                deleted_count += 1;
+            }
+        }
+        self.total_memory
+            .fetch_sub(freed_memory as u64, Ordering::Relaxed);
+        deleted_count
     }
 
     async fn exists(&self, keys: &[Bytes]) -> i64 {
-        self.0
+        self.map
             .read()
             .await
             .iter()
@@ -63,15 +124,20 @@ impl Store for MemoryStore {
 
     async fn mget(&self, keys: &[Bytes]) -> Vec<Option<Entry>> {
         let now = get_current_millis();
-        let map = self.0.read().await;
+        let map = self.map.read().await;
         keys.iter()
             .map(|k| map.get(k).filter(|v| !v.is_expired(now)).cloned())
             .collect()
     }
 
     async fn mset(&self, items: &[(Bytes, Bytes)]) {
-        let mut map = self.0.write().await;
+        let mut map = self.map.write().await;
+        let mut added_memory: usize = 0;
         for (key, value) in items {
+            let old_memory = map.get(key).map(|e| key.len() + e.value.len()).unwrap_or(0);
+            let new_memory = key.len() + value.len();
+            added_memory += new_memory - old_memory;
+
             map.insert(
                 key.clone(),
                 Entry {
@@ -80,17 +146,20 @@ impl Store for MemoryStore {
                 },
             );
         }
+        self.total_memory
+            .fetch_add(added_memory as u64, Ordering::Relaxed);
     }
 
     async fn len(&self) -> usize {
-        self.0.read().await.len()
+        self.map.read().await.len()
     }
 
     async fn clear(&self) {
-        self.0.write().await.clear();
+        self.map.write().await.clear();
+        self.total_memory.store(0, Ordering::Relaxed);
     }
 
     async fn is_empty(&self) -> bool {
-        self.0.read().await.is_empty()
+        self.map.read().await.is_empty()
     }
 }
