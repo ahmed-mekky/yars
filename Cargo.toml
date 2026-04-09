@@ -11,3 +11,4 @@ nom = "8.0.0"
 tokio = { version = "1.49.0", features = ["full"] }
 futures = "0.3.32"
 async-trait = "0.1.89"
+dotenvy = "0.15.7"

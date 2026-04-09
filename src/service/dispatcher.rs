@@ -1,8 +1,9 @@
 use crate::{
+    config::AppConfig,
     protocol::{command::Command, resp::Frame},
     service::handlers::{
         multikey::{del, exists, mget, mset},
-        nokey::{dbsize, echo, flushdb, info, ping},
+        nokey::{config_get, dbsize, echo, flushdb, info, ping},
         singlekey::{
             append, decr, expire, get, getdel, getset, incr, persist, pttl, set, setnx, strlen, ttl,
         },
@@ -11,9 +12,10 @@ use crate::{
     utils::time::get_current_millis,
 };
 
-pub async fn execute(store: &MemoryStore, cmd: Command) -> Frame {
+pub async fn execute(store: &MemoryStore, config: &AppConfig, cmd: Command) -> Frame {
     let result = match cmd {
         Command::PING => ping().await,
+        Command::CONFIG { pattern } => config_get(config, pattern).await,
         Command::ECHO { msg } => echo(msg).await,
         Command::DBSIZE => dbsize(store).await,
         Command::FLUSHDB => flushdb(store).await,

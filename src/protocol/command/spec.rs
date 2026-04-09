@@ -11,9 +11,11 @@ pub enum KeyTopology {
 impl Command {
     pub fn key_topology(&self) -> KeyTopology {
         match self {
-            Command::PING | Command::DBSIZE | Command::FLUSHDB | Command::INFO => {
-                KeyTopology::NoKey
-            }
+            Command::PING
+            | Command::CONFIG { .. }
+            | Command::DBSIZE
+            | Command::FLUSHDB
+            | Command::INFO => KeyTopology::NoKey,
             Command::GET { key }
             | Command::SET { key, .. }
             | Command::TTL { key }

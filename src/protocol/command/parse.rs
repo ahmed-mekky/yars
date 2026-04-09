@@ -19,6 +19,7 @@ impl TryFrom<Frame> for Command {
 
         match cmd.to_ascii_uppercase().as_slice() {
             b"PING" => Ok(Command::PING),
+            b"CONFIG" => parse_config(&input),
             b"DBSIZE" => Ok(Command::DBSIZE),
             b"FLUSHDB" => Ok(Command::FLUSHDB),
             b"INFO" => Ok(Command::INFO),
@@ -241,4 +242,28 @@ fn parse_msg(input: &[Frame]) -> Result<Bytes, Frame> {
         _ => return Err(Frame::Error("ERR syntax error".into())),
     };
     Ok(msg)
+}
+
+fn parse_config(input: &[Frame]) -> Result<Command, Frame> {
+    if input.len() != 3 {
+        return Err(Frame::Error(
+            "ERR wrong number of arguments for 'config|get' command".into(),
+        ));
+    }
+
+    let Some(Frame::BulkString(sub)) = input.get(1) else {
+        return Err(Frame::Error("ERR syntax error".into()));
+    };
+
+    if !sub.eq_ignore_ascii_case(b"get") {
+        return Err(Frame::Error("ERR only CONFIG GET is supported".into()));
+    }
+
+    let Some(Frame::BulkString(pattern)) = input.get(2) else {
+        return Err(Frame::Error("ERR syntax error".into()));
+    };
+
+    Ok(Command::CONFIG {
+        pattern: pattern.clone(),
+    })
 }

@@ -8,6 +8,7 @@ use crate::store::types::Entry;
 #[allow(clippy::upper_case_acronyms)]
 pub enum Command {
     PING,
+    CONFIG { pattern: Bytes },
     GET { key: Bytes },
     SET { key: Bytes, entry: Entry },
     DEL { keys: Vec<Bytes> },

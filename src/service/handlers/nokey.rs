@@ -1,4 +1,5 @@
 use crate::{
+    config::AppConfig,
     protocol::resp::Frame,
     store::{memory::MemoryStore, traits::Store},
 };
@@ -35,4 +36,30 @@ pub async fn info(store: &MemoryStore) -> Frame {
         total_commands
     );
     Frame::BulkString(info.into())
+}
+
+pub async fn config_get(config: &AppConfig, pattern: tokio_util::bytes::Bytes) -> Frame {
+    let Some(pattern) = std::str::from_utf8(&pattern)
+        .ok()
+        .map(|s| s.to_ascii_lowercase())
+    else {
+        return Frame::Error("ERR pattern is not valid UTF-8".into());
+    };
+
+    let mut values = Vec::new();
+
+    if pattern == "*" || pattern == "appendonly" {
+        values.push(Frame::BulkString("appendonly".into()));
+        values.push(Frame::BulkString(config.append_only.to_string().into()));
+    }
+    if pattern == "*" || pattern == "appendfilename" {
+        values.push(Frame::BulkString("appendfilename".into()));
+        values.push(Frame::BulkString(config.aof_path.clone().into()));
+    }
+    if pattern == "*" || pattern == "appendfsync" {
+        values.push(Frame::BulkString("appendfsync".into()));
+        values.push(Frame::BulkString(config.fsync_mode.as_str().into()));
+    }
+
+    Frame::Array(values)
 }
