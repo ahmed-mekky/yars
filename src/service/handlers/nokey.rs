@@ -54,7 +54,9 @@ pub async fn config_get(config: &AppConfig, pattern: tokio_util::bytes::Bytes) -
     }
     if pattern == "*" || pattern == "appendfilename" {
         values.push(Frame::BulkString("appendfilename".into()));
-        values.push(Frame::BulkString(config.aof_path.clone().into()));
+        values.push(Frame::BulkString(
+            config.aof_path.to_string_lossy().into_owned().into(),
+        ));
     }
     if pattern == "*" || pattern == "appendfsync" {
         values.push(Frame::BulkString("appendfsync".into()));

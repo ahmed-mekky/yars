@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{Result, anyhow};
 
 #[derive(Clone, Copy, Debug)]
@@ -20,14 +22,15 @@ impl FsyncMode {
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub append_only: bool,
-    pub aof_path: String,
+    pub aof_path: PathBuf,
     pub fsync_mode: FsyncMode,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
-        let aof_path =
-            std::env::var("YARS_AOF_PATH").unwrap_or_else(|_| "./data/main.yars".to_string());
+        let aof_path = std::env::var("YARS_AOF_PATH")
+            .unwrap_or_else(|_| "./data/main.yars".to_string())
+            .parse()?;
         let fsync_mode = match std::env::var("YARS_AOF_FSYNC")
             .unwrap_or_else(|_| "everysec".to_string())
             .to_ascii_lowercase()
