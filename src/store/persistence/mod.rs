@@ -30,11 +30,12 @@ use crate::{
         traits::Store,
         types::{Entry, Expiry},
     },
+    utils::pkg::parse_version,
 };
 
-const MAGIC: &[u8; 4] = b"YARS";
-const VERSION: u8 = 1;
-const HEADER_LEN: usize = 5;
+const MAGIC: &[u8] = env!("CARGO_PKG_NAME").as_bytes();
+const VERSION: [u8; 3] = parse_version(env!("CARGO_PKG_VERSION"));
+const HEADER_LEN: usize = MAGIC.len() + VERSION.len();
 
 pub struct AofEngine {
     fsync_mode: FsyncMode,
@@ -60,7 +61,7 @@ impl AofEngine {
         let metadata = file.metadata().await?;
         if metadata.len() == 0 {
             file.write_all(MAGIC).await?;
-            file.write_all(&[VERSION]).await?;
+            file.write_all(&VERSION).await?;
             if matches!(fsync_mode, FsyncMode::Always) {
                 file.sync_data().await?;
             }
@@ -174,7 +175,7 @@ fn validate_header(raw: &[u8]) -> Result<()> {
     if &raw[..MAGIC.len()] != MAGIC {
         return Err(anyhow!("invalid AOF: bad magic"));
     }
-    if raw[MAGIC.len()] != VERSION {
+    if raw[MAGIC.len()..HEADER_LEN] != VERSION {
         return Err(anyhow!("unsupported AOF version: {}", raw[MAGIC.len()]));
     }
     Ok(())
