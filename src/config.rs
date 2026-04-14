@@ -28,9 +28,12 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
+        let default_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("./data"))
+            .join("yars/data.aof");
         let aof_path = std::env::var("YARS_AOF_PATH")
-            .unwrap_or_else(|_| "~/.local/share/yars/appendonly.aof".to_string())
-            .parse()?;
+            .map(|s| parse_path(PathBuf::from(&s)))
+            .unwrap_or(default_path);
         let fsync_mode = match std::env::var("YARS_AOF_FSYNC")
             .unwrap_or_else(|_| "everysec".to_string())
             .to_ascii_lowercase()
@@ -51,4 +54,14 @@ impl AppConfig {
             fsync_mode,
         })
     }
+}
+
+fn parse_path(path: PathBuf) -> PathBuf {
+    let s = path.to_str().unwrap_or("");
+    if let Some(rest) = s.strip_prefix('~')
+        && let Some(home) = dirs::home_dir()
+    {
+        return PathBuf::from(format!("{}{}", home.to_str().unwrap(), rest));
+    }
+    path
 }
