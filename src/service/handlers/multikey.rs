@@ -1,16 +1,15 @@
+use crate::{protocol::resp::Frame, service::handlers::SetMutation, store::traits::Store};
 use tokio_util::bytes::Bytes;
 
-use crate::{protocol::resp::Frame, store::traits::Store};
-
-pub async fn del(store: &impl Store, keys: Vec<Bytes>) -> Frame {
-    Frame::Integer(store.del(&keys).await)
+pub async fn del(store: &impl Store, keys: Vec<Bytes>) -> (Frame, Option<SetMutation>) {
+    (Frame::Integer(store.del(&keys).await), None)
 }
 
-pub async fn exists(store: &impl Store, keys: Vec<Bytes>) -> Frame {
-    Frame::Integer(store.exists(&keys).await)
+pub async fn exists(store: &impl Store, keys: Vec<Bytes>) -> (Frame, Option<SetMutation>) {
+    (Frame::Integer(store.exists(&keys).await), None)
 }
 
-pub async fn mget(store: &impl Store, keys: Vec<Bytes>) -> Frame {
+pub async fn mget(store: &impl Store, keys: Vec<Bytes>) -> (Frame, Option<SetMutation>) {
     let values = store
         .mget(&keys)
         .await
@@ -20,10 +19,10 @@ pub async fn mget(store: &impl Store, keys: Vec<Bytes>) -> Frame {
             None => Frame::NullBulkString,
         })
         .collect();
-    Frame::Array(values)
+    (Frame::Array(values), None)
 }
 
-pub async fn mset(store: &impl Store, items: Vec<(Bytes, Bytes)>) -> Frame {
+pub async fn mset(store: &impl Store, items: Vec<(Bytes, Bytes)>) -> (Frame, Option<SetMutation>) {
     store.mset(&items).await;
-    Frame::SimpleString("OK".into())
+    (Frame::SimpleString("OK".into()), None)
 }

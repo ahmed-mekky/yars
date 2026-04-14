@@ -1,27 +1,29 @@
 use crate::{
     config::AppConfig,
     protocol::resp::Frame,
+    service::handlers::SetMutation,
     store::{memory::MemoryStore, traits::Store},
 };
+use tokio_util::bytes::Bytes;
 
-pub async fn ping() -> Frame {
-    Frame::SimpleString("PONG".into())
+pub async fn ping() -> (Frame, Option<SetMutation>) {
+    (Frame::SimpleString("PONG".into()), None)
 }
 
-pub async fn echo(msg: tokio_util::bytes::Bytes) -> Frame {
-    Frame::BulkString(msg)
+pub async fn echo(msg: Bytes) -> (Frame, Option<SetMutation>) {
+    (Frame::BulkString(msg), None)
 }
 
-pub async fn dbsize(store: &impl Store) -> Frame {
-    Frame::Integer(store.len().await as i64)
+pub async fn dbsize(store: &impl Store) -> (Frame, Option<SetMutation>) {
+    (Frame::Integer(store.len().await as i64), None)
 }
 
-pub async fn flushdb(store: &impl Store) -> Frame {
+pub async fn flushdb(store: &impl Store) -> (Frame, Option<SetMutation>) {
     store.clear().await;
-    Frame::Integer(1)
+    (Frame::Integer(1), None)
 }
 
-pub async fn info(store: &MemoryStore) -> Frame {
+pub async fn info(store: &MemoryStore) -> (Frame, Option<SetMutation>) {
     let key_count = store.len().await as i64;
     let used_memory = store.used_memory().await;
     let uptime_seconds = store.uptime_seconds();
@@ -35,15 +37,15 @@ pub async fn info(store: &MemoryStore) -> Frame {
         uptime_seconds,
         total_commands
     );
-    Frame::BulkString(info.into())
+    (Frame::BulkString(info.into()), None)
 }
 
-pub async fn config_get(config: &AppConfig, pattern: tokio_util::bytes::Bytes) -> Frame {
+pub async fn config_get(config: &AppConfig, pattern: Bytes) -> (Frame, Option<SetMutation>) {
     let Some(pattern) = std::str::from_utf8(&pattern)
         .ok()
         .map(|s| s.to_ascii_lowercase())
     else {
-        return Frame::Error("ERR pattern is not valid UTF-8".into());
+        return (Frame::Error("ERR pattern is not valid UTF-8".into()), None);
     };
 
     let mut values = Vec::new();
@@ -63,5 +65,5 @@ pub async fn config_get(config: &AppConfig, pattern: tokio_util::bytes::Bytes) -
         values.push(Frame::BulkString(config.fsync_mode.as_str().into()));
     }
 
-    Frame::Array(values)
+    (Frame::Array(values), None)
 }

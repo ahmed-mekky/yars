@@ -5,7 +5,7 @@ use crate::store::types::Entry;
 
 #[async_trait]
 pub trait Store: Send + Sync {
-    async fn set(&self, key: Bytes, entry: Entry);
+    async fn set(&self, key: Bytes, entry: Entry) -> Entry;
     async fn get(&self, key: &Bytes) -> Option<Entry>;
     async fn del(&self, keys: &[Bytes]) -> i64;
     async fn exists(&self, keys: &[Bytes]) -> i64;

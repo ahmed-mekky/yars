@@ -29,7 +29,7 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
         let aof_path = std::env::var("YARS_AOF_PATH")
-            .unwrap_or_else(|_| "./data/main.yars".to_string())
+            .unwrap_or_else(|_| "~/.local/share/yars/appendonly.aof".to_string())
             .parse()?;
         let fsync_mode = match std::env::var("YARS_AOF_FSYNC")
             .unwrap_or_else(|_| "everysec".to_string())

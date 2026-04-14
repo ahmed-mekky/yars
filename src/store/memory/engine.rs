@@ -56,7 +56,7 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn set(&self, key: Bytes, mut entry: Entry) {
+    async fn set(&self, key: Bytes, mut entry: Entry) -> Entry {
         let mut map = self.map.write().await;
         let old_memory = map
             .get(&key)
@@ -79,7 +79,8 @@ impl Store for MemoryStore {
             Expiry::Keep => existing_exp.cloned().unwrap_or(Expiry::None),
             _ => entry.exp.clone(),
         };
-        map.insert(key, entry);
+        map.insert(key, entry.clone());
+        entry
     }
 
     async fn get(&self, key: &Bytes) -> Option<Entry> {

@@ -5,15 +5,15 @@ use crate::store::{
     types::{Entry, Expiry},
 };
 
-pub async fn incr(store: &impl Store, key: Bytes) -> Result<i64, &'static str> {
-    step(store, key, 1).await
+pub async fn incr(store: &impl Store, key: Bytes) -> Result<Entry, &'static str> {
+    incr_by(store, key, 1).await
 }
 
-pub async fn decr(store: &impl Store, key: Bytes) -> Result<i64, &'static str> {
-    step(store, key, -1).await
+pub async fn decr(store: &impl Store, key: Bytes) -> Result<Entry, &'static str> {
+    incr_by(store, key, -1).await
 }
 
-async fn step(store: &impl Store, key: Bytes, delta: i64) -> Result<i64, &'static str> {
+pub async fn incr_by(store: &impl Store, key: Bytes, delta: i64) -> Result<Entry, &'static str> {
     let mut entry = match store.get(&key).await {
         Some(entry) => entry,
         None => Entry {
@@ -26,12 +26,12 @@ async fn step(store: &impl Store, key: Bytes, delta: i64) -> Result<i64, &'stati
         .ok()
         .and_then(|s| s.parse::<i64>().ok())
         .ok_or("ERR value is not an integer or out of range")?;
-    let next = current
+    current
         .checked_add(delta)
         .ok_or("ERR value is not an integer or out of range")?;
-    entry.value = next.to_string().into();
-    store.set(key, entry).await;
-    Ok(next)
+    entry.value = current.checked_add(delta).unwrap().to_string().into();
+    let resolved = store.set(key, entry).await;
+    Ok(resolved)
 }
 
 pub async fn strlen(store: &impl Store, key: Bytes) -> i64 {
@@ -41,22 +41,18 @@ pub async fn strlen(store: &impl Store, key: Bytes) -> i64 {
     }
 }
 
-pub async fn append(store: &impl Store, key: Bytes, value: Bytes) -> i64 {
+pub async fn append(store: &impl Store, key: Bytes, value: Bytes) -> Entry {
     if let Some(mut entry) = store.get(&key).await {
         let combined = [entry.value, value].concat();
-        let len = combined.len() as i64;
         entry.value = Bytes::copy_from_slice(&combined);
-        store.set(key, entry).await;
-        return len;
+        return store.set(key, entry).await;
     }
 
-    let len = value.len() as i64;
     let entry = Entry {
         value,
         exp: Expiry::None,
     };
-    store.set(key, entry).await;
-    len
+    store.set(key, entry).await
 }
 
 pub async fn getdel(store: &impl Store, key: Bytes) -> Option<Entry> {
@@ -67,36 +63,36 @@ pub async fn getdel(store: &impl Store, key: Bytes) -> Option<Entry> {
     entry
 }
 
-pub async fn getset(store: &impl Store, key: Bytes, entry: Entry) -> Option<Entry> {
+pub async fn getset(store: &impl Store, key: Bytes, entry: Entry) -> (Option<Entry>, Entry) {
     let existing = store.get(&key).await;
-    store.set(key, entry).await;
-    existing
+    let resolved = store.set(key, entry).await;
+    (existing, resolved)
 }
 
-pub async fn setnx(store: &impl Store, key: Bytes, entry: Entry) -> i64 {
+pub async fn setnx(store: &impl Store, key: Bytes, entry: Entry) -> Option<Entry> {
     if store.get(&key).await.is_none() {
-        store.set(key, entry).await;
-        return 1;
+        let resolved = store.set(key, entry).await;
+        return Some(resolved);
     }
-    0
+    None
 }
 
-pub async fn persist(store: &impl Store, key: Bytes) -> i64 {
+pub async fn persist(store: &impl Store, key: Bytes) -> Option<Entry> {
     if let Some(mut entry) = store.get(&key).await
         && let Expiry::At(_) = entry.exp
     {
         entry.exp = Expiry::None;
-        store.set(key, entry).await;
-        return 1;
+        let resolved = store.set(key, entry).await;
+        return Some(resolved);
     }
-    0
+    None
 }
 
-pub async fn pexpire(store: &impl Store, key: Bytes, ttl: u64, now: u64) -> i64 {
+pub async fn pexpire(store: &impl Store, key: Bytes, ttl: u64, now: u64) -> Option<Entry> {
     if let Some(mut entry) = store.get(&key).await {
         entry.exp = Expiry::At(now.saturating_add(ttl));
-        store.set(key, entry).await;
-        return 1;
+        let resolved = store.set(key, entry).await;
+        return Some(resolved);
     }
-    0
+    None
 }
