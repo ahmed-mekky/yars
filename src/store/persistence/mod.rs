@@ -1,15 +1,27 @@
 pub mod codec;
 pub mod record;
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{Result, anyhow};
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     sync::Mutex,
+    task::JoinHandle,
 };
-use tokio_util::{bytes::BytesMut, codec::Decoder, codec::Encoder};
+use tokio_util::{
+    bytes::BytesMut,
+    codec::{Decoder, Encoder},
+    sync::CancellationToken,
+};
 
 use crate::{
     config::FsyncMode,
@@ -26,11 +38,16 @@ const HEADER_LEN: usize = 5;
 
 pub struct AofEngine {
     fsync_mode: FsyncMode,
-    writer: Mutex<File>,
+    writer: Arc<Mutex<File>>,
+    dirty: Arc<AtomicBool>,
 }
 
 impl AofEngine {
-    pub async fn open(path: PathBuf, fsync_mode: FsyncMode) -> Result<Self> {
+    pub async fn open(
+        path: PathBuf,
+        fsync_mode: FsyncMode,
+        cancel: CancellationToken,
+    ) -> Result<(Self, Option<JoinHandle<()>>)> {
         ensure_parent_dir(&path).await?;
 
         let mut file = OpenOptions::new()
@@ -49,10 +66,48 @@ impl AofEngine {
             }
         }
 
-        Ok(Self {
-            fsync_mode,
-            writer: Mutex::new(file),
-        })
+        let writer = Arc::new(Mutex::new(file.try_clone().await?));
+        let dirty = Arc::new(AtomicBool::new(false));
+
+        let fsync_handle = if matches!(fsync_mode, FsyncMode::EverySec) {
+            let writer = writer.clone();
+            let dirty = dirty.clone();
+            Some(tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            if dirty.swap(false, Ordering::Relaxed) {
+                                let file = writer.lock().await;
+                                if let Err(err) = file.sync_data().await {
+                                    eprintln!("AOF final fsync error: {err:?}");
+                                }
+                            }
+                            return;
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                            if dirty.swap(false, Ordering::Relaxed) {
+                                let file = writer.lock().await;
+                                if let Err(err) = file.sync_data().await {
+                                    eprintln!("AOF fsync error: {err:?}");
+                                    dirty.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
+        Ok((
+            Self {
+                fsync_mode,
+                writer,
+                dirty,
+            },
+            fsync_handle,
+        ))
     }
 
     pub async fn append(&self, record: Record) -> Result<()> {
@@ -65,6 +120,10 @@ impl AofEngine {
 
         if matches!(self.fsync_mode, FsyncMode::Always) {
             file.sync_data().await?;
+        }
+
+        if matches!(self.fsync_mode, FsyncMode::EverySec) {
+            self.dirty.store(true, Ordering::Relaxed);
         }
 
         Ok(())

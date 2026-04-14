@@ -73,6 +73,8 @@ async fn dispatch(
         Command::EXISTS { keys } => exists(store, keys.clone()).await,
         Command::MGET { keys } => mget(store, keys.clone()).await,
         Command::MSET { items } => mset(store, items.clone()).await,
+        #[allow(unreachable_patterns)]
+        Command::SHUTDOWN => unreachable!(),
     }
 }
 

@@ -31,4 +31,5 @@ pub enum Command {
     DECR { key: Bytes },
     STRLEN { key: Bytes },
     APPEND { key: Bytes, value: Bytes },
+    SHUTDOWN,
 }

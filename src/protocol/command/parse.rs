@@ -86,6 +86,7 @@ impl TryFrom<Frame> for Command {
                 key: parse_key(&input)?,
                 value: parse_value(&input)?,
             }),
+            b"SHUTDOWN" => Ok(Command::SHUTDOWN),
             _ => Err(Frame::Error("ERR unknown command".into())),
         }
     }

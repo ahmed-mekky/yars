@@ -15,7 +15,8 @@ impl Command {
             | Command::CONFIG { .. }
             | Command::DBSIZE
             | Command::FLUSHDB
-            | Command::INFO => KeyTopology::NoKey,
+            | Command::INFO
+            | Command::SHUTDOWN => KeyTopology::NoKey,
             Command::GET { key }
             | Command::SET { key, .. }
             | Command::TTL { key }

@@ -31,10 +31,10 @@ impl TryFrom<u8> for RecordTag {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::Set),
-            2 => Ok(Self::Del),
-            3 => Ok(Self::MSet),
-            6 => Ok(Self::FlushDb),
+            0 => Ok(Self::Set),
+            1 => Ok(Self::Del),
+            2 => Ok(Self::MSet),
+            3 => Ok(Self::FlushDb),
             _ => Err(anyhow!("unknown record tag")),
         }
     }
