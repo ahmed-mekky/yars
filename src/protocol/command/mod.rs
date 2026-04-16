@@ -5,10 +5,11 @@ use tokio_util::bytes::Bytes;
 
 use crate::store::types::Entry;
 
-#[allow(clippy::upper_case_acronyms)]
+#[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 pub enum Command {
     PING,
-    CONFIG { pattern: Bytes },
+    CONFIG_GET { pattern: Bytes },
+    CONFIG_SET { key: Bytes, value: Bytes },
     GET { key: Bytes },
     SET { key: Bytes, entry: Entry },
     DEL { keys: Vec<Bytes> },

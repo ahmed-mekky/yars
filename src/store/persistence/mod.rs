@@ -38,7 +38,7 @@ const VERSION: [u8; 3] = parse_version(env!("CARGO_PKG_VERSION"));
 const HEADER_LEN: usize = MAGIC.len() + VERSION.len();
 
 pub struct AofEngine {
-    fsync_mode: FsyncMode,
+    fsync_mode: std::sync::Mutex<FsyncMode>,
     writer: Arc<Mutex<File>>,
     dirty: Arc<AtomicBool>,
 }
@@ -103,7 +103,7 @@ impl AofEngine {
 
         Ok((
             Self {
-                fsync_mode,
+                fsync_mode: std::sync::Mutex::new(fsync_mode),
                 writer,
                 dirty,
             },
@@ -119,15 +119,20 @@ impl AofEngine {
         let mut file = self.writer.lock().await;
         file.write_all(&frame).await?;
 
-        if matches!(self.fsync_mode, FsyncMode::Always) {
+        let fsync_mode = *self.fsync_mode.lock().unwrap();
+        if matches!(fsync_mode, FsyncMode::Always) {
             file.sync_data().await?;
         }
 
-        if matches!(self.fsync_mode, FsyncMode::EverySec) {
+        if matches!(fsync_mode, FsyncMode::EverySec) {
             self.dirty.store(true, Ordering::Relaxed);
         }
 
         Ok(())
+    }
+
+    pub fn set_fsync_mode(&self, mode: FsyncMode) {
+        *self.fsync_mode.lock().unwrap() = mode;
     }
 
     pub async fn replay_into(&self, store: &impl Store) -> Result<()> {

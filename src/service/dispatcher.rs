@@ -4,7 +4,7 @@ use crate::{
     service::handlers::{
         SetMutation,
         multikey::{del, exists, mget, mset},
-        nokey::{config_get, dbsize, echo, flushdb, info, ping},
+        nokey::{config_get, config_set, dbsize, echo, flushdb, info, ping},
         singlekey::{
             append, decr, expire, get, getdel, getset, incr, persist, pttl, set, setnx, strlen, ttl,
         },
@@ -17,14 +17,15 @@ use crate::{
     utils::time::get_current_millis,
 };
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub async fn execute(
     store: &MemoryStore,
-    config: &AppConfig,
+    config: &Arc<RwLock<AppConfig>>,
     aof: &Option<Arc<AofEngine>>,
     cmd: Command,
 ) -> Frame {
-    let (frame, set_mutation) = dispatch(store, config, &cmd).await;
+    let (frame, set_mutation) = dispatch(store, config, aof, &cmd).await;
 
     if !matches!(frame, Frame::Error(_)) {
         store.increment_commands();
@@ -41,12 +42,16 @@ pub async fn execute(
 
 async fn dispatch(
     store: &MemoryStore,
-    config: &AppConfig,
+    config: &Arc<RwLock<AppConfig>>,
+    aof: &Option<Arc<AofEngine>>,
     cmd: &Command,
 ) -> (Frame, Option<SetMutation>) {
     match cmd {
         Command::PING => ping().await,
-        Command::CONFIG { pattern } => config_get(config, pattern.clone()).await,
+        Command::CONFIG_GET { pattern } => config_get(config, pattern.clone()).await,
+        Command::CONFIG_SET { key, value } => {
+            config_set(config, aof, key.clone(), value.clone()).await
+        }
         Command::ECHO { msg } => echo(msg.clone()).await,
         Command::DBSIZE => dbsize(store).await,
         Command::FLUSHDB => flushdb(store).await,

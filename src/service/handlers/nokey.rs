@@ -2,8 +2,10 @@ use crate::{
     config::AppConfig,
     protocol::resp::Frame,
     service::handlers::SetMutation,
-    store::{memory::MemoryStore, traits::Store},
+    store::{memory::MemoryStore, persistence::AofEngine, traits::Store},
 };
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tokio_util::bytes::Bytes;
 
 pub async fn ping() -> (Frame, Option<SetMutation>) {
@@ -40,7 +42,10 @@ pub async fn info(store: &MemoryStore) -> (Frame, Option<SetMutation>) {
     (Frame::BulkString(info.into()), None)
 }
 
-pub async fn config_get(config: &AppConfig, pattern: Bytes) -> (Frame, Option<SetMutation>) {
+pub async fn config_get(
+    config: &Arc<RwLock<AppConfig>>,
+    pattern: Bytes,
+) -> (Frame, Option<SetMutation>) {
     let Some(pattern) = std::str::from_utf8(&pattern)
         .ok()
         .map(|s| s.to_ascii_lowercase())
@@ -48,6 +53,7 @@ pub async fn config_get(config: &AppConfig, pattern: Bytes) -> (Frame, Option<Se
         return (Frame::Error("ERR pattern is not valid UTF-8".into()), None);
     };
 
+    let config = config.read().await;
     let mut values = Vec::new();
 
     if pattern == "*" || pattern == "appendonly" {
@@ -66,4 +72,45 @@ pub async fn config_get(config: &AppConfig, pattern: Bytes) -> (Frame, Option<Se
     }
 
     (Frame::Array(values), None)
+}
+
+pub async fn config_set(
+    config: &Arc<RwLock<AppConfig>>,
+    aof: &Option<Arc<AofEngine>>,
+    key: Bytes,
+    value: Bytes,
+) -> (Frame, Option<SetMutation>) {
+    let Some(key) = std::str::from_utf8(&key)
+        .ok()
+        .map(|s| s.to_ascii_lowercase())
+    else {
+        return (Frame::Error("ERR key is not valid UTF-8".into()), None);
+    };
+
+    let Some(value) = std::str::from_utf8(&value).ok() else {
+        return (Frame::Error("ERR value is not a valid string".into()), None);
+    };
+
+    match &key[..] {
+        "appendfsync" => {
+            let mut config = config.write().await;
+            match config.set_fsync_mode(value) {
+                Ok(()) => {
+                    if let Some(aof) = aof {
+                        aof.set_fsync_mode(config.fsync_mode);
+                    }
+                    (Frame::SimpleString("OK".to_string()), None)
+                }
+                Err(e) => (Frame::Error(format!("ERR {e}")), None),
+            }
+        }
+        "appendonly" | "appendfilename" => (
+            Frame::Error("ERR Config setting requires a restart to take effect".into()),
+            None,
+        ),
+        _ => (
+            Frame::Error("ERR unknown configuration option".into()),
+            None,
+        ),
+    }
 }

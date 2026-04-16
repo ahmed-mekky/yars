@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::RwLock, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
 pub struct Server {
     listener: TcpListener,
     store: Arc<MemoryStore>,
-    config: Arc<AppConfig>,
+    config: Arc<RwLock<AppConfig>>,
     aof: Option<Arc<AofEngine>>,
     cancel: CancellationToken,
     fsync_handle: Option<JoinHandle<()>>,
@@ -37,7 +37,7 @@ impl Server {
             listener,
             store,
             aof,
-            config: Arc::new(config),
+            config: Arc::new(RwLock::new(config)),
             cancel,
             fsync_handle,
         })

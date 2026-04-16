@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, sync::RwLock};
 use tokio_util::{
     codec::{Decoder, Framed},
     sync::CancellationToken,
@@ -18,7 +18,7 @@ use crate::{
 pub struct Session {
     framed: Framed<TcpStream, RespCodec>,
     store: Arc<MemoryStore>,
-    config: Arc<AppConfig>,
+    config: Arc<RwLock<AppConfig>>,
     aof: Option<Arc<AofEngine>>,
     cancel: CancellationToken,
 }
@@ -27,7 +27,7 @@ impl Session {
     pub fn new(
         socket: TcpStream,
         store: Arc<MemoryStore>,
-        config: Arc<AppConfig>,
+        config: Arc<RwLock<AppConfig>>,
         aof: Option<Arc<AofEngine>>,
         cancel: CancellationToken,
     ) -> Self {

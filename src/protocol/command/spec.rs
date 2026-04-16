@@ -12,7 +12,8 @@ impl Command {
     pub fn key_topology(&self) -> KeyTopology {
         match self {
             Command::PING
-            | Command::CONFIG { .. }
+            | Command::CONFIG_GET { .. }
+            | Command::CONFIG_SET { .. }
             | Command::DBSIZE
             | Command::FLUSHDB
             | Command::INFO

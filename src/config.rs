@@ -54,6 +54,16 @@ impl AppConfig {
             fsync_mode,
         })
     }
+
+    pub fn set_fsync_mode(&mut self, fsync: &str) -> Result<()> {
+        self.fsync_mode = match fsync.trim().to_ascii_lowercase().as_str() {
+            "always" => FsyncMode::Always,
+            "everysec" => FsyncMode::EverySec,
+            "no" => FsyncMode::No,
+            _ => return Err(anyhow!("Invalid fsync mode: {fsync}")),
+        };
+        Ok(())
+    }
 }
 
 fn parse_path(path: PathBuf) -> PathBuf {
