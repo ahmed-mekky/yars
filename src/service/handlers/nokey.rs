@@ -104,10 +104,25 @@ pub async fn config_set(
                 Err(e) => (Frame::Error(format!("ERR {e}")), None),
             }
         }
-        "appendonly" | "appendfilename" => (
-            Frame::Error("ERR Config setting requires a restart to take effect".into()),
-            None,
-        ),
+        "appendonly" => {
+            let mut config = config.write().await;
+            match value.parse::<bool>() {
+                Ok(v) => {
+                    config.append_only = v;
+                    (Frame::SimpleString("OK".into()), None)
+                }
+                Err(e) => (Frame::Error(format!("ERR {e}")), None),
+            }
+        }
+        "appendfilename" => {
+            let mut config = config.write().await;
+            if value.is_empty() {
+                (Frame::Error("ERR empty filename".into()), None)
+            } else {
+                config.aof_path = config.data_dir.join(value);
+                (Frame::SimpleString("OK".into()), None)
+            }
+        }
         _ => (
             Frame::Error("ERR unknown configuration option".into()),
             None,

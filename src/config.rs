@@ -42,6 +42,7 @@ pub struct AppConfig {
     pub aof_path: PathBuf,
     pub fsync_mode: FsyncMode,
     pub config_path: PathBuf,
+    pub data_dir: PathBuf,
 }
 
 const CONFIG_HEADER: &str = "\
@@ -134,6 +135,7 @@ impl AppConfig {
             aof_path,
             fsync_mode,
             config_path,
+            data_dir: yars_data_dir,
         })
     }
 
