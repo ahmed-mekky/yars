@@ -14,6 +14,7 @@ impl Command {
             Command::PING
             | Command::CONFIG_GET { .. }
             | Command::CONFIG_SET { .. }
+            | Command::CONFIG_REWRITE
             | Command::DBSIZE
             | Command::FLUSHDB
             | Command::INFO

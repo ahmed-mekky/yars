@@ -286,6 +286,14 @@ fn parse_config(input: &[Frame]) -> Result<Command, Frame> {
                 value: value.clone(),
             })
         }
+        b"REWRITE" => {
+            if input.len() != 2 {
+                return Err(Frame::Error(
+                    "ERR wrong number of arguments for 'config|rewrite' command".into(),
+                ));
+            }
+            Ok(Command::CONFIG_REWRITE)
+        }
         _ => Err(Frame::Error("ERR unknown command for 'CONFIG' ".into())),
     }
 }

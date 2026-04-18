@@ -10,6 +10,7 @@ pub enum Command {
     PING,
     CONFIG_GET { pattern: Bytes },
     CONFIG_SET { key: Bytes, value: Bytes },
+    CONFIG_REWRITE,
     GET { key: Bytes },
     SET { key: Bytes, entry: Entry },
     DEL { keys: Vec<Bytes> },

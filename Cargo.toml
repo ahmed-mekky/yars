@@ -13,3 +13,5 @@ futures = "0.3.32"
 async-trait = "0.1.89"
 dotenvy = "0.15.7"
 dirs = "6.0.0"
+serde = { version = "1", features = ["derive"] }
+toml_edit = { version = "0.22", features = ["serde"] }

@@ -114,3 +114,11 @@ pub async fn config_set(
         ),
     }
 }
+
+pub async fn config_rewrite(config: &Arc<RwLock<AppConfig>>) -> (Frame, Option<SetMutation>) {
+    let config = config.read().await;
+    match config.write_to_file() {
+        Ok(()) => (Frame::SimpleString("OK".into()), None),
+        Err(e) => (Frame::Error(format!("ERR {e}")), None),
+    }
+}

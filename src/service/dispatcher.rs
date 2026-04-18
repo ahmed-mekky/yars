@@ -4,7 +4,7 @@ use crate::{
     service::handlers::{
         SetMutation,
         multikey::{del, exists, mget, mset},
-        nokey::{config_get, config_set, dbsize, echo, flushdb, info, ping},
+        nokey::{config_get, config_rewrite, config_set, dbsize, echo, flushdb, info, ping},
         singlekey::{
             append, decr, expire, get, getdel, getset, incr, persist, pttl, set, setnx, strlen, ttl,
         },
@@ -52,6 +52,7 @@ async fn dispatch(
         Command::CONFIG_SET { key, value } => {
             config_set(config, aof, key.clone(), value.clone()).await
         }
+        Command::CONFIG_REWRITE => config_rewrite(config).await,
         Command::ECHO { msg } => echo(msg.clone()).await,
         Command::DBSIZE => dbsize(store).await,
         Command::FLUSHDB => flushdb(store).await,
