@@ -297,3 +297,327 @@ fn parse_config(input: &[Frame]) -> Result<Command, Frame> {
         _ => Err(Frame::Error("ERR unknown command for 'CONFIG' ".into())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        protocol::{command::Command, resp::Frame},
+        store::types::Expiry,
+    };
+    use tokio_util::bytes::Bytes;
+
+    fn bulk(s: &str) -> Frame {
+        Frame::BulkString(Bytes::from(s.as_bytes().to_vec()))
+    }
+
+    fn bulk_bytes(b: &[u8]) -> Frame {
+        Frame::BulkString(Bytes::copy_from_slice(b))
+    }
+
+    fn cmd_frame(args: &[Frame]) -> Frame {
+        Frame::Array(args.to_vec())
+    }
+
+    #[test]
+    fn non_array_returns_error() {
+        let result = Command::try_from(Frame::SimpleString("PING".into()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn missing_command_returns_error() {
+        let result = Command::try_from(Frame::Array(vec![]));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unknown_command_returns_error() {
+        let frame = cmd_frame(&[bulk("UNKNOWNCMD")]);
+        let err = Command::try_from(frame).unwrap_err();
+        assert!(matches!(err, Frame::Error(s) if s.contains("unknown command")));
+    }
+
+    #[test]
+    fn parse_ping() {
+        let frame = cmd_frame(&[bulk("PING")]);
+        assert!(matches!(Command::try_from(frame), Ok(Command::PING)));
+    }
+
+    #[test]
+    fn parse_dbsize() {
+        let frame = cmd_frame(&[bulk("DBSIZE")]);
+        assert!(matches!(Command::try_from(frame), Ok(Command::DBSIZE)));
+    }
+
+    #[test]
+    fn parse_flushdb() {
+        let frame = cmd_frame(&[bulk("FLUSHDB")]);
+        assert!(matches!(Command::try_from(frame), Ok(Command::FLUSHDB)));
+    }
+
+    #[test]
+    fn parse_info() {
+        let frame = cmd_frame(&[bulk("INFO")]);
+        assert!(matches!(Command::try_from(frame), Ok(Command::INFO)));
+    }
+
+    #[test]
+    fn parse_shutdown() {
+        let frame = cmd_frame(&[bulk("SHUTDOWN")]);
+        assert!(matches!(Command::try_from(frame), Ok(Command::SHUTDOWN)));
+    }
+
+    #[test]
+    fn parse_echo() {
+        let frame = cmd_frame(&[bulk("ECHO"), bulk("hello")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::ECHO { msg } if msg.as_ref() == b"hello"));
+    }
+
+    #[test]
+    fn parse_echo_missing_msg() {
+        let frame = cmd_frame(&[bulk("ECHO")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+
+    #[test]
+    fn parse_get() {
+        let frame = cmd_frame(&[bulk("GET"), bulk("mykey")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::GET { key } if key.as_ref() == b"mykey"));
+    }
+
+    #[test]
+    fn parse_get_missing_key() {
+        let frame = cmd_frame(&[bulk("GET")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+
+    #[test]
+    fn parse_set_basic() {
+        let frame = cmd_frame(&[bulk("SET"), bulk("k"), bulk("v")]);
+        let cmd = Command::try_from(frame).unwrap();
+        match cmd {
+            Command::SET { key, entry } => {
+                assert_eq!(key.as_ref(), b"k");
+                assert_eq!(entry.value.as_ref(), b"v");
+                assert!(matches!(entry.exp, Expiry::None));
+            }
+            _ => panic!("expected SET"),
+        }
+    }
+
+    #[test]
+    fn parse_set_with_ex() {
+        let frame = cmd_frame(&[bulk("SET"), bulk("k"), bulk("v"), bulk("EX"), bulk("60")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::SET { entry, .. } if matches!(entry.exp, Expiry::At(_))));
+    }
+
+    #[test]
+    fn parse_set_with_px() {
+        let frame = cmd_frame(&[bulk("SET"), bulk("k"), bulk("v"), bulk("PX"), bulk("5000")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::SET { entry, .. } if matches!(entry.exp, Expiry::At(_))));
+    }
+
+    #[test]
+    fn parse_set_with_keepttl() {
+        let frame = cmd_frame(&[bulk("SET"), bulk("k"), bulk("v"), bulk("KEEPTTL")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::SET { entry, .. } if matches!(entry.exp, Expiry::Keep)));
+    }
+
+    #[test]
+    fn parse_set_with_invalid_modifier() {
+        let frame = cmd_frame(&[bulk("SET"), bulk("k"), bulk("v"), bulk("BOGUS")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+
+    #[test]
+    fn parse_set_missing_value() {
+        let frame = cmd_frame(&[bulk("SET"), bulk("k")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+
+    #[test]
+    fn parse_del() {
+        let frame = cmd_frame(&[bulk("DEL"), bulk("a"), bulk("b")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::DEL { keys } if keys.len() == 2));
+    }
+
+    #[test]
+    fn parse_exists() {
+        let frame = cmd_frame(&[bulk("EXISTS"), bulk("k")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(
+            matches!(cmd, Command::EXISTS { keys } if keys.len() == 1 && keys[0].as_ref() == b"k")
+        );
+    }
+
+    #[test]
+    fn parse_mget() {
+        let frame = cmd_frame(&[bulk("MGET"), bulk("a"), bulk("b"), bulk("c")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::MGET { keys } if keys.len() == 3));
+    }
+
+    #[test]
+    fn parse_mset() {
+        let frame = cmd_frame(&[bulk("MSET"), bulk("k1"), bulk("v1"), bulk("k2"), bulk("v2")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::MSET { items } if items.len() == 2));
+    }
+
+    #[test]
+    fn parse_mset_odd_args_errors() {
+        let frame = cmd_frame(&[bulk("MSET"), bulk("k1"), bulk("v1"), bulk("k2")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+
+    #[test]
+    fn parse_ttl() {
+        let frame = cmd_frame(&[bulk("TTL"), bulk("k")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::TTL { key } if key.as_ref() == b"k"));
+    }
+
+    #[test]
+    fn parse_pttl() {
+        let frame = cmd_frame(&[bulk("PTTL"), bulk("k")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::PTTL { key } if key.as_ref() == b"k"));
+    }
+
+    #[test]
+    fn parse_persist() {
+        let frame = cmd_frame(&[bulk("PERSIST"), bulk("k")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::PERSIST { key } if key.as_ref() == b"k"));
+    }
+
+    #[test]
+    fn parse_expire() {
+        let frame = cmd_frame(&[bulk("EXPIRE"), bulk("k"), bulk("10")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::EXPIRE { ttl, .. } if ttl == 10000));
+    }
+
+    #[test]
+    fn parse_pexpire() {
+        let frame = cmd_frame(&[bulk("PEXPIRE"), bulk("k"), bulk("500")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::PEXPIRE { ttl, .. } if ttl == 500));
+    }
+
+    #[test]
+    fn parse_expire_missing_ttl() {
+        let frame = cmd_frame(&[bulk("EXPIRE"), bulk("k")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+
+    #[test]
+    fn parse_expire_non_numeric_ttl() {
+        let frame = cmd_frame(&[bulk("EXPIRE"), bulk("k"), bulk("abc")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+
+    #[test]
+    fn parse_getdel() {
+        let frame = cmd_frame(&[bulk("GETDEL"), bulk("k")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::GETDEL { key } if key.as_ref() == b"k"));
+    }
+
+    #[test]
+    fn parse_getset() {
+        let frame = cmd_frame(&[bulk("GETSET"), bulk("k"), bulk("v")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(
+            matches!(cmd, Command::GETSET { key, entry } if key.as_ref() == b"k" && entry.value.as_ref() == b"v")
+        );
+    }
+
+    #[test]
+    fn parse_setnx() {
+        let frame = cmd_frame(&[bulk("SETNX"), bulk("k"), bulk("v")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(
+            matches!(cmd, Command::SETNX { key, entry } if key.as_ref() == b"k" && entry.value.as_ref() == b"v")
+        );
+    }
+
+    #[test]
+    fn parse_incr() {
+        let frame = cmd_frame(&[bulk("INCR"), bulk("counter")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::INCR { key } if key.as_ref() == b"counter"));
+    }
+
+    #[test]
+    fn parse_decr() {
+        let frame = cmd_frame(&[bulk("DECR"), bulk("counter")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::DECR { key } if key.as_ref() == b"counter"));
+    }
+
+    #[test]
+    fn parse_strlen() {
+        let frame = cmd_frame(&[bulk("STRLEN"), bulk("k")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::STRLEN { .. }));
+    }
+
+    #[test]
+    fn parse_append() {
+        let frame = cmd_frame(&[bulk("APPEND"), bulk("k"), bulk("v")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::APPEND { .. }));
+    }
+
+    #[test]
+    fn parse_config_get() {
+        let frame = cmd_frame(&[bulk("CONFIG"), bulk("GET"), bulk("*")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::CONFIG_GET { pattern } if pattern.as_ref() == b"*"));
+    }
+
+    #[test]
+    fn parse_config_set() {
+        let frame = cmd_frame(&[bulk("CONFIG"), bulk("SET"), bulk("appendonly"), bulk("no")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(
+            matches!(cmd, Command::CONFIG_SET { key, value } if (key.as_ref() == b"appendonly" && value.as_ref() == b"no"))
+        );
+    }
+
+    #[test]
+    fn parse_config_rewrite() {
+        let frame = cmd_frame(&[bulk("CONFIG"), bulk("REWRITE")]);
+        let cmd = Command::try_from(frame).unwrap();
+        assert!(matches!(cmd, Command::CONFIG_REWRITE));
+    }
+
+    #[test]
+    fn parse_config_wrong_arg_count() {
+        let frame = cmd_frame(&[bulk("CONFIG"), bulk("GET")]);
+        let err = Command::try_from(frame).unwrap_err();
+        assert!(matches!(err, Frame::Error(s) if s.contains("wrong number")));
+    }
+
+    #[test]
+    fn parse_case_insensitive() {
+        let frame = cmd_frame(&[bulk_bytes(b"ping")]);
+        assert!(matches!(Command::try_from(frame), Ok(Command::PING)));
+
+        let frame = cmd_frame(&[bulk_bytes(b"PiNg")]);
+        assert!(matches!(Command::try_from(frame), Ok(Command::PING)));
+    }
+
+    #[test]
+    fn parse_set_ex_with_non_numeric() {
+        let frame = cmd_frame(&[bulk("SET"), bulk("k"), bulk("v"), bulk("EX"), bulk("abc")]);
+        assert!(Command::try_from(frame).is_err());
+    }
+}

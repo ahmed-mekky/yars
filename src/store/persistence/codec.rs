@@ -151,3 +151,162 @@ fn get_opt_u64(input: &mut &[u8]) -> Result<Option<u64>> {
         _ => Err(anyhow!("invalid optional flag")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::persistence::record::Record;
+
+    fn round_trip(record: Record) {
+        let mut codec = RecordCodec;
+        let mut buf = BytesMut::new();
+        codec.encode(record.clone(), &mut buf).unwrap();
+        let decoded = codec.decode(&mut buf).unwrap().unwrap();
+        match (&record, &decoded) {
+            (
+                Record::Set { key, value, exp_ms },
+                Record::Set {
+                    key: dk,
+                    value: dv,
+                    exp_ms: de,
+                },
+            ) => {
+                assert_eq!(key, dk);
+                assert_eq!(value, dv);
+                assert_eq!(exp_ms, de);
+            }
+            (Record::Del { keys }, Record::Del { keys: dk }) => {
+                assert_eq!(keys, dk);
+            }
+            (Record::MSet { items }, Record::MSet { items: di }) => {
+                assert_eq!(items, di);
+            }
+            (Record::FlushDb, Record::FlushDb) => {}
+            _ => panic!("record type mismatch"),
+        }
+    }
+
+    #[test]
+    fn round_trip_set_no_expiry() {
+        round_trip(Record::Set {
+            key: Bytes::from_static(b"mykey"),
+            value: Bytes::from_static(b"myval"),
+            exp_ms: None,
+        });
+    }
+
+    #[test]
+    fn round_trip_set_with_expiry() {
+        round_trip(Record::Set {
+            key: Bytes::from_static(b"mykey"),
+            value: Bytes::from_static(b"myval"),
+            exp_ms: Some(123456789),
+        });
+    }
+
+    #[test]
+    fn round_trip_del_single_key() {
+        round_trip(Record::Del {
+            keys: vec![Bytes::from_static(b"k1")],
+        });
+    }
+
+    #[test]
+    fn round_trip_del_multiple_keys() {
+        round_trip(Record::Del {
+            keys: vec![
+                Bytes::from_static(b"k1"),
+                Bytes::from_static(b"k2"),
+                Bytes::from_static(b"k3"),
+            ],
+        });
+    }
+
+    #[test]
+    fn round_trip_mset() {
+        round_trip(Record::MSet {
+            items: vec![
+                (Bytes::from_static(b"k1"), Bytes::from_static(b"v1")),
+                (Bytes::from_static(b"k2"), Bytes::from_static(b"v2")),
+            ],
+        });
+    }
+
+    #[test]
+    fn round_trip_flushdb() {
+        round_trip(Record::FlushDb);
+    }
+
+    #[test]
+    fn decode_incomplete_length_prefix() {
+        let mut codec = RecordCodec;
+        let mut buf = BytesMut::from(&[0u8, 0][..]);
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_incomplete_payload() {
+        let mut codec = RecordCodec;
+        let mut buf = BytesMut::from(&[0u8, 0, 0, 10, 0][..]);
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_empty_payload_errors() {
+        let result = decode_payload(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_invalid_tag_errors() {
+        let result = decode_payload(&[99]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encode_decode_multiple_sequential() {
+        let mut codec = RecordCodec;
+        let mut buf = BytesMut::new();
+
+        let records = vec![
+            Record::Set {
+                key: Bytes::from_static(b"a"),
+                value: Bytes::from_static(b"1"),
+                exp_ms: None,
+            },
+            Record::Del {
+                keys: vec![Bytes::from_static(b"b")],
+            },
+            Record::FlushDb,
+        ];
+
+        for rec in &records {
+            codec.encode(rec.clone(), &mut buf).unwrap();
+        }
+
+        for expected in &records {
+            let decoded = codec.decode(&mut buf).unwrap().unwrap();
+            match (expected, &decoded) {
+                (
+                    Record::Set { key, value, exp_ms },
+                    Record::Set {
+                        key: dk,
+                        value: dv,
+                        exp_ms: de,
+                    },
+                ) => {
+                    assert_eq!(key, dk);
+                    assert_eq!(value, dv);
+                    assert_eq!(exp_ms, de);
+                }
+                (Record::Del { keys }, Record::Del { keys: dk }) => {
+                    assert_eq!(keys, dk);
+                }
+                (Record::FlushDb, Record::FlushDb) => {}
+                _ => panic!("mismatch"),
+            }
+        }
+
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+}

@@ -5,6 +5,7 @@ use tokio_util::bytes::Bytes;
 
 use crate::store::types::Entry;
 
+#[derive(Debug)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 pub enum Command {
     PING,

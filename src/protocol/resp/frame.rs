@@ -162,3 +162,172 @@ impl From<&Frame> for Bytes {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn round_trip(frame: &Frame) {
+        let bytes: Bytes = Bytes::from(frame);
+        let (parsed, consumed) = Frame::parse(&bytes).unwrap().unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_frames_equal(frame, &parsed);
+    }
+
+    fn assert_frames_equal(a: &Frame, b: &Frame) {
+        match (a, b) {
+            (Frame::SimpleString(a), Frame::SimpleString(b)) => assert_eq!(a, b),
+            (Frame::Error(a), Frame::Error(b)) => assert_eq!(a, b),
+            (Frame::Integer(a), Frame::Integer(b)) => assert_eq!(a, b),
+            (Frame::BulkString(a), Frame::BulkString(b)) => assert_eq!(a, b),
+            (Frame::NullBulkString, Frame::NullBulkString) => {}
+            (Frame::Array(a), Frame::Array(b)) => {
+                assert_eq!(a.len(), b.len());
+                for (expected, actual) in a.iter().zip(b.iter()) {
+                    assert_frames_equal(expected, actual);
+                }
+            }
+            (Frame::NullArray, Frame::NullArray) => {}
+            _ => panic!("frame type mismatch"),
+        }
+    }
+
+    #[test]
+    fn parse_simple_string() {
+        let (frame, consumed) = Frame::parse(b"+OK\r\n").unwrap().unwrap();
+        assert_eq!(consumed, 5);
+        assert!(matches!(frame, Frame::SimpleString(s) if s == "OK"));
+    }
+
+    #[test]
+    fn parse_error() {
+        let (frame, consumed) = Frame::parse(b"-ERR unknown\r\n").unwrap().unwrap();
+        assert_eq!(consumed, 14);
+        assert!(matches!(frame, Frame::Error(s) if s == "ERR unknown"));
+    }
+
+    #[test]
+    fn parse_integer() {
+        let (frame, consumed) = Frame::parse(b":42\r\n").unwrap().unwrap();
+        assert_eq!(consumed, 5);
+        assert!(matches!(frame, Frame::Integer(i) if i == 42));
+    }
+
+    #[test]
+    fn parse_negative_integer() {
+        let (frame, _) = Frame::parse(b":-3\r\n").unwrap().unwrap();
+        assert!(matches!(frame, Frame::Integer(i) if i == -3));
+    }
+
+    #[test]
+    fn parse_bulk_string() {
+        let input = b"$5\r\nhello\r\n";
+        let (frame, consumed) = Frame::parse(input).unwrap().unwrap();
+        assert_eq!(consumed, input.len());
+        assert!(matches!(frame, Frame::BulkString(b) if b.as_ref() == b"hello"));
+    }
+
+    #[test]
+    fn parse_null_bulk_string() {
+        let (frame, consumed) = Frame::parse(b"$-1\r\n").unwrap().unwrap();
+        assert_eq!(consumed, 5);
+        assert!(matches!(frame, Frame::NullBulkString));
+    }
+
+    #[test]
+    fn parse_array() {
+        let input = b"*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
+        let (frame, consumed) = Frame::parse(input).unwrap().unwrap();
+        assert_eq!(consumed, input.len());
+        let Frame::Array(items) = frame else {
+            panic!("expected array")
+        };
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn parse_null_array() {
+        let (frame, consumed) = Frame::parse(b"*-1\r\n").unwrap().unwrap();
+        assert_eq!(consumed, 5);
+        assert!(matches!(frame, Frame::NullArray));
+    }
+
+    #[test]
+    fn parse_nested_array() {
+        let input = b"*1\r\n*2\r\n+hello\r\n+world\r\n";
+        let (frame, consumed) = Frame::parse(input).unwrap().unwrap();
+        assert_eq!(consumed, input.len());
+        let Frame::Array(outer) = frame else {
+            panic!("expected array")
+        };
+        assert_eq!(outer.len(), 1);
+        assert!(matches!(&outer[0], Frame::Array(inner) if inner.len() == 2));
+    }
+
+    #[test]
+    fn parse_empty_array() {
+        let input = b"*0\r\n";
+        let (frame, consumed) = Frame::parse(input).unwrap().unwrap();
+        assert_eq!(consumed, input.len());
+        let Frame::Array(items) = frame else {
+            panic!("expected array")
+        };
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn incomplete_input_returns_none() {
+        assert!(Frame::parse(b"+OK").unwrap().is_none());
+        assert!(Frame::parse(b"$5\r\nhel").unwrap().is_none());
+        assert!(Frame::parse(b"*2\r\n").unwrap().is_none());
+    }
+
+    #[test]
+    fn empty_input_returns_none() {
+        assert!(Frame::parse(b"").unwrap().is_none());
+    }
+
+    #[test]
+    fn unknown_prefix_returns_error() {
+        assert!(Frame::parse(b"%bad\r\n").is_err());
+    }
+
+    #[test]
+    fn round_trip_simple_string() {
+        round_trip(&Frame::SimpleString("PONG".into()));
+    }
+
+    #[test]
+    fn round_trip_error() {
+        round_trip(&Frame::Error("ERR something".into()));
+    }
+
+    #[test]
+    fn round_trip_integer() {
+        round_trip(&Frame::Integer(99));
+        round_trip(&Frame::Integer(-1));
+    }
+
+    #[test]
+    fn round_trip_bulk_string() {
+        round_trip(&Frame::BulkString(Bytes::from_static(b"data")));
+    }
+
+    #[test]
+    fn round_trip_null_bulk_string() {
+        round_trip(&Frame::NullBulkString);
+    }
+
+    #[test]
+    fn round_trip_array() {
+        round_trip(&Frame::Array(vec![
+            Frame::SimpleString("hi".into()),
+            Frame::Integer(1),
+        ]));
+    }
+
+    #[test]
+    fn round_trip_null_array() {
+        round_trip(&Frame::NullArray);
+    }
+}
