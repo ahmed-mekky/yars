@@ -9,7 +9,7 @@ use nom::{
 };
 use tokio_util::bytes::Bytes;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Frame {
     SimpleString(String),
     Error(String),

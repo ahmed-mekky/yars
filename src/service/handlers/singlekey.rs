@@ -123,3 +123,305 @@ pub async fn expire(
         None => (Frame::Integer(0), None),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::memory::MemoryStore;
+
+    fn entry(value: &[u8], exp: Expiry) -> Entry {
+        Entry {
+            value: Bytes::from(value.to_vec()),
+            exp,
+        }
+    }
+
+    #[tokio::test]
+    async fn get_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await;
+        let (frame, mutation) = get(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::BulkString(b) if b.as_ref() == b"v"));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_missing() {
+        let store = MemoryStore::new();
+        let (frame, mutation) = get(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::NullBulkString));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_returns_ok_and_mutation() {
+        let store = MemoryStore::new();
+        let (frame, mutation) =
+            set(&store, Bytes::from_static(b"k"), entry(b"v", Expiry::None)).await;
+        assert!(matches!(frame, Frame::SimpleString(s) if s == "OK"));
+        let (k, e) = mutation.unwrap();
+        assert_eq!(k, Bytes::from_static(b"k"));
+        assert_eq!(e.value, Bytes::from_static(b"v"));
+    }
+
+    #[tokio::test]
+    async fn getdel_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await;
+        let (frame, mutation) = getdel(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::BulkString(b) if b.as_ref() == b"v"));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn getdel_missing() {
+        let store = MemoryStore::new();
+        let (frame, mutation) = getdel(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::NullBulkString));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn getset_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"old", Expiry::None))
+            .await;
+        let (frame, mutation) = getset(
+            &store,
+            Bytes::from_static(b"k"),
+            entry(b"new", Expiry::None),
+        )
+        .await;
+        assert!(matches!(frame, Frame::BulkString(b) if b.as_ref() == b"old"));
+        let (k, e) = mutation.unwrap();
+        assert_eq!(k, Bytes::from_static(b"k"));
+        assert_eq!(e.value, Bytes::from_static(b"new"));
+    }
+
+    #[tokio::test]
+    async fn getset_missing() {
+        let store = MemoryStore::new();
+        let (frame, mutation) = getset(
+            &store,
+            Bytes::from_static(b"k"),
+            entry(b"new", Expiry::None),
+        )
+        .await;
+        assert!(matches!(frame, Frame::NullBulkString));
+        assert!(mutation.is_some());
+    }
+
+    #[tokio::test]
+    async fn setnx_on_missing() {
+        let store = MemoryStore::new();
+        let (frame, mutation) =
+            setnx(&store, Bytes::from_static(b"k"), entry(b"v", Expiry::None)).await;
+        assert!(matches!(frame, Frame::Integer(1)));
+        assert!(mutation.is_some());
+    }
+
+    #[tokio::test]
+    async fn setnx_on_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"old", Expiry::None))
+            .await;
+        let (frame, mutation) = setnx(
+            &store,
+            Bytes::from_static(b"k"),
+            entry(b"new", Expiry::None),
+        )
+        .await;
+        assert!(matches!(frame, Frame::Integer(0)));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn incr_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"5", Expiry::None))
+            .await;
+        let (frame, mutation) = incr(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::Integer(6)));
+        assert!(mutation.is_some());
+    }
+
+    #[tokio::test]
+    async fn incr_non_integer_errors() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"abc", Expiry::None))
+            .await;
+        let (frame, mutation) = incr(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::Error(_)));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn decr_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"5", Expiry::None))
+            .await;
+        let (frame, mutation) = decr(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::Integer(4)));
+        assert!(mutation.is_some());
+    }
+
+    #[tokio::test]
+    async fn strlen_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"hello", Expiry::None))
+            .await;
+        let (frame, mutation) = strlen(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::Integer(5)));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn strlen_missing() {
+        let store = MemoryStore::new();
+        let (frame, mutation) = strlen(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::Integer(0)));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn append_new_key() {
+        let store = MemoryStore::new();
+        let (frame, mutation) =
+            append(&store, Bytes::from_static(b"k"), Bytes::from_static(b"abc")).await;
+        assert!(matches!(frame, Frame::Integer(3)));
+        assert!(mutation.is_some());
+    }
+
+    #[tokio::test]
+    async fn append_existing_key() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"hello", Expiry::None))
+            .await;
+        let (frame, mutation) = append(
+            &store,
+            Bytes::from_static(b"k"),
+            Bytes::from_static(b" world"),
+        )
+        .await;
+        assert!(matches!(frame, Frame::Integer(11)));
+        let (_, e) = mutation.unwrap();
+        assert_eq!(e.value, Bytes::from_static(b"hello world"));
+    }
+
+    #[tokio::test]
+    async fn ttl_missing() {
+        let store = MemoryStore::new();
+        let (frame, _) = ttl(&store, Bytes::from_static(b"k"), 0).await;
+        assert!(matches!(frame, Frame::Integer(-2)));
+    }
+
+    #[tokio::test]
+    async fn ttl_no_expiry() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await;
+        let (frame, _) = ttl(&store, Bytes::from_static(b"k"), 0).await;
+        assert!(matches!(frame, Frame::Integer(-1)));
+    }
+
+    #[tokio::test]
+    async fn ttl_with_expiry() {
+        let store = MemoryStore::new();
+        let now = crate::utils::time::get_current_millis();
+        store
+            .set(
+                Bytes::from_static(b"k"),
+                entry(b"v", Expiry::At(now + 10_000)),
+            )
+            .await;
+        let (frame, _) = ttl(&store, Bytes::from_static(b"k"), now).await;
+        assert!(matches!(frame, Frame::Integer(10)));
+    }
+
+    #[tokio::test]
+    async fn pttl_missing() {
+        let store = MemoryStore::new();
+        let (frame, _) = pttl(&store, Bytes::from_static(b"k"), 0).await;
+        assert!(matches!(frame, Frame::Integer(-2)));
+    }
+
+    #[tokio::test]
+    async fn pttl_no_expiry() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await;
+        let (frame, _) = pttl(&store, Bytes::from_static(b"k"), 0).await;
+        assert!(matches!(frame, Frame::Integer(-1)));
+    }
+
+    #[tokio::test]
+    async fn pttl_with_expiry() {
+        let store = MemoryStore::new();
+        let now = crate::utils::time::get_current_millis();
+        store
+            .set(
+                Bytes::from_static(b"k"),
+                entry(b"v", Expiry::At(now + 10_000)),
+            )
+            .await;
+        let (frame, _) = pttl(&store, Bytes::from_static(b"k"), now).await;
+        assert!(matches!(frame, Frame::Integer(10_000)));
+    }
+
+    #[tokio::test]
+    async fn persist_existing_with_expiry() {
+        let store = MemoryStore::new();
+        let far_future = crate::utils::time::get_current_millis() + 1_000_000;
+        store
+            .set(
+                Bytes::from_static(b"k"),
+                entry(b"v", Expiry::At(far_future)),
+            )
+            .await;
+        let (frame, mutation) = persist(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::Integer(1)));
+        assert!(mutation.is_some());
+    }
+
+    #[tokio::test]
+    async fn persist_missing() {
+        let store = MemoryStore::new();
+        let (frame, mutation) = persist(&store, Bytes::from_static(b"k")).await;
+        assert!(matches!(frame, Frame::Integer(0)));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn expire_existing() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await;
+        let now = crate::utils::time::get_current_millis();
+        let (frame, mutation) = expire(&store, Bytes::from_static(b"k"), 5000, now).await;
+        assert!(matches!(frame, Frame::Integer(1)));
+        assert!(mutation.is_some());
+    }
+
+    #[tokio::test]
+    async fn expire_missing() {
+        let store = MemoryStore::new();
+        let now = crate::utils::time::get_current_millis();
+        let (frame, mutation) = expire(&store, Bytes::from_static(b"k"), 5000, now).await;
+        assert!(matches!(frame, Frame::Integer(0)));
+        assert!(mutation.is_none());
+    }
+}

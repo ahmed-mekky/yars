@@ -199,3 +199,117 @@ impl AppConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fsync_mode_from_str_valid() {
+        assert_eq!(FsyncMode::from_str("always").unwrap(), FsyncMode::Always);
+        assert_eq!(
+            FsyncMode::from_str("everysec").unwrap(),
+            FsyncMode::EverySec
+        );
+        assert_eq!(FsyncMode::from_str("no").unwrap(), FsyncMode::No);
+    }
+
+    #[test]
+    fn fsync_mode_from_str_case_insensitive_and_trimmed() {
+        assert_eq!(
+            FsyncMode::from_str("  ALWAYS  ").unwrap(),
+            FsyncMode::Always
+        );
+        assert_eq!(
+            FsyncMode::from_str("EverySec").unwrap(),
+            FsyncMode::EverySec
+        );
+        assert_eq!(FsyncMode::from_str("NO").unwrap(), FsyncMode::No);
+    }
+
+    #[test]
+    fn fsync_mode_from_str_invalid() {
+        assert!(FsyncMode::from_str("sometimes").is_err());
+    }
+
+    #[test]
+    fn fsync_mode_as_str_round_trip() {
+        assert_eq!(FsyncMode::Always.as_str(), "always");
+        assert_eq!(FsyncMode::EverySec.as_str(), "everysec");
+        assert_eq!(FsyncMode::No.as_str(), "no");
+    }
+
+    #[test]
+    fn commented_defaults_contains_expected_keys() {
+        let defs = commented_defaults();
+        assert!(defs.contains("append_only"));
+        assert!(defs.contains("append_filename"));
+        assert!(defs.contains("fsync_mode"));
+        for line in defs.lines() {
+            assert!(line.starts_with("# "));
+        }
+    }
+
+    #[test]
+    fn set_fsync_mode_valid() {
+        let mut cfg = AppConfig {
+            append_only: true,
+            aof_path: PathBuf::from("/tmp/a.aof"),
+            fsync_mode: FsyncMode::Always,
+            config_path: PathBuf::from("/tmp/c.toml"),
+            data_dir: PathBuf::from("/tmp"),
+        };
+        cfg.set_fsync_mode("no").unwrap();
+        assert_eq!(cfg.fsync_mode, FsyncMode::No);
+    }
+
+    #[test]
+    fn set_fsync_mode_invalid() {
+        let mut cfg = AppConfig {
+            append_only: true,
+            aof_path: PathBuf::from("/tmp/a.aof"),
+            fsync_mode: FsyncMode::Always,
+            config_path: PathBuf::from("/tmp/c.toml"),
+            data_dir: PathBuf::from("/tmp"),
+        };
+        assert!(cfg.set_fsync_mode("invalid").is_err());
+    }
+
+    #[test]
+    fn build_fresh_with_defaults_is_mostly_empty() {
+        let s = AppConfig::build_fresh("data.aof", true, FsyncMode::EverySec);
+        assert!(s.contains("# YARS configuration file"));
+        let lines: Vec<&str> = s.lines().collect();
+        let uncommented: Vec<&str> = lines
+            .iter()
+            .filter(|l| !l.starts_with("#"))
+            .copied()
+            .collect();
+        assert!(uncommented.is_empty() || uncommented.iter().all(|l| l.trim().is_empty()));
+    }
+
+    #[test]
+    fn build_fresh_with_non_defaults_emits_them() {
+        let s = AppConfig::build_fresh("custom.aof", false, FsyncMode::No);
+        assert!(s.contains("append_only = false\n"));
+        assert!(s.contains("append_filename = \"custom.aof\"\n"));
+        assert!(s.contains("fsync_mode = \"no\"\n"));
+    }
+
+    #[test]
+    fn write_to_file_creates_and_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("yars.toml");
+        let cfg = AppConfig {
+            append_only: false,
+            aof_path: dir.path().join("data.aof"),
+            fsync_mode: FsyncMode::No,
+            config_path: config_path.clone(),
+            data_dir: dir.path().to_path_buf(),
+        };
+        cfg.write_to_file().unwrap();
+        assert!(config_path.exists());
+        let contents = std::fs::read_to_string(&config_path).unwrap();
+        assert!(contents.contains("append_only = false"));
+    }
+}

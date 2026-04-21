@@ -137,3 +137,166 @@ pub async fn config_rewrite(config: &Arc<RwLock<AppConfig>>) -> (Frame, Option<S
         Err(e) => (Frame::Error(format!("ERR {e}")), None),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{
+        memory::MemoryStore,
+        types::{Entry, Expiry},
+    };
+
+    fn make_config() -> Arc<RwLock<AppConfig>> {
+        Arc::new(RwLock::new(AppConfig {
+            append_only: true,
+            aof_path: std::path::PathBuf::from("/tmp/test.aof"),
+            fsync_mode: crate::config::FsyncMode::EverySec,
+            config_path: std::path::PathBuf::from("/tmp/test.toml"),
+            data_dir: std::path::PathBuf::from("/tmp"),
+        }))
+    }
+
+    #[tokio::test]
+    async fn ping_returns_pong() {
+        let (frame, mutation) = ping().await;
+        assert!(matches!(frame, Frame::SimpleString(s) if s == "PONG"));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn echo_returns_bulk_string() {
+        let (frame, mutation) = echo(Bytes::from_static(b"hello")).await;
+        assert!(matches!(frame, Frame::BulkString(b) if b.as_ref() == b"hello"));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn dbsize_returns_count() {
+        let store = MemoryStore::new();
+        store
+            .set(
+                Bytes::from_static(b"k"),
+                Entry {
+                    value: Bytes::from_static(b"v"),
+                    exp: Expiry::None,
+                },
+            )
+            .await;
+        let (frame, mutation) = dbsize(&store).await;
+        assert!(matches!(frame, Frame::Integer(1)));
+        assert!(mutation.is_none());
+    }
+
+    #[tokio::test]
+    async fn flushdb_returns_one() {
+        let store = MemoryStore::new();
+        store
+            .set(
+                Bytes::from_static(b"k"),
+                Entry {
+                    value: Bytes::from_static(b"v"),
+                    exp: Expiry::None,
+                },
+            )
+            .await;
+        let (frame, mutation) = flushdb(&store).await;
+        assert!(matches!(frame, Frame::Integer(1)));
+        assert!(mutation.is_none());
+        assert!(store.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn info_contains_expected_fields() {
+        let store = MemoryStore::new();
+        let (frame, mutation) = info(&store).await;
+        assert!(mutation.is_none());
+        let Frame::BulkString(data) = frame else {
+            panic!("expected bulk string")
+        };
+        let info_str = std::str::from_utf8(&data).unwrap();
+        assert!(info_str.contains("yars_version"));
+        assert!(info_str.contains("db_keys"));
+        assert!(info_str.contains("used_memory"));
+        assert!(info_str.contains("uptime_seconds"));
+        assert!(info_str.contains("total_commands"));
+    }
+
+    #[tokio::test]
+    async fn config_get_star_returns_all() {
+        let config = make_config();
+        let (frame, mutation) = config_get(&config, Bytes::from_static(b"*")).await;
+        assert!(mutation.is_none());
+        let Frame::Array(items) = frame else {
+            panic!("expected array")
+        };
+        assert!(items.len() >= 6);
+    }
+
+    #[tokio::test]
+    async fn config_get_specific_key() {
+        let config = make_config();
+        let (frame, mutation) = config_get(&config, Bytes::from_static(b"appendonly")).await;
+        assert!(mutation.is_none());
+        let Frame::Array(items) = frame else {
+            panic!("expected array")
+        };
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Frame::BulkString(b) if b.as_ref() == b"appendonly"));
+        assert!(matches!(&items[1], Frame::BulkString(b) if b.as_ref() == b"true"));
+    }
+
+    #[tokio::test]
+    async fn config_get_unknown_returns_empty() {
+        let config = make_config();
+        let (frame, mutation) = config_get(&config, Bytes::from_static(b"unknown")).await;
+        assert!(mutation.is_none());
+        let Frame::Array(items) = frame else {
+            panic!("expected array")
+        };
+        assert!(items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn config_set_fsync_mode_ok() {
+        let config = make_config();
+        let (frame, mutation) = config_set(
+            &config,
+            &None,
+            Bytes::from_static(b"appendfsync"),
+            Bytes::from_static(b"no"),
+        )
+        .await;
+        assert!(matches!(frame, Frame::SimpleString(s) if s == "OK"));
+        assert!(mutation.is_none());
+        let cfg = config.read().await;
+        assert!(matches!(cfg.fsync_mode, crate::config::FsyncMode::No));
+    }
+
+    #[tokio::test]
+    async fn config_set_appendonly_ok() {
+        let config = make_config();
+        let (frame, _mutation) = config_set(
+            &config,
+            &None,
+            Bytes::from_static(b"appendonly"),
+            Bytes::from_static(b"false"),
+        )
+        .await;
+        assert!(matches!(frame, Frame::SimpleString(s) if s == "OK"));
+        assert!(!config.read().await.append_only);
+    }
+
+    #[tokio::test]
+    async fn config_set_unknown_returns_error() {
+        let config = make_config();
+        let (frame, mutation) = config_set(
+            &config,
+            &None,
+            Bytes::from_static(b"unknown"),
+            Bytes::from_static(b"v"),
+        )
+        .await;
+        assert!(matches!(frame, Frame::Error(_)));
+        assert!(mutation.is_none());
+    }
+}

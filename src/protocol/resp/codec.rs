@@ -30,3 +30,40 @@ impl Decoder for RespCodec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::bytes::Bytes;
+
+    #[test]
+    fn round_trip_simple_string() {
+        let mut codec = RespCodec;
+        let mut buf = BytesMut::new();
+        let frame = Frame::SimpleString("PONG".into());
+        codec.encode(frame.clone(), &mut buf).unwrap();
+        let decoded = codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded, frame);
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn round_trip_array() {
+        let mut codec = RespCodec;
+        let mut buf = BytesMut::new();
+        let frame = Frame::Array(vec![
+            Frame::BulkString(Bytes::from_static(b"hello")),
+            Frame::Integer(42),
+        ]);
+        codec.encode(frame.clone(), &mut buf).unwrap();
+        let decoded = codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn decode_incomplete_returns_none() {
+        let mut codec = RespCodec;
+        let mut buf = BytesMut::from(&b"$5\r\nhel"[..]);
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+}

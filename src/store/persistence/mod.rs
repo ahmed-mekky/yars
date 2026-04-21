@@ -207,3 +207,140 @@ async fn apply_record(store: &impl Store, record: Record) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::memory::MemoryStore;
+    use tokio_util::bytes::Bytes;
+
+    #[tokio::test]
+    async fn open_creates_header_on_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.aof");
+        let cancel = CancellationToken::new();
+        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel)
+            .await
+            .unwrap();
+
+        drop(engine);
+
+        let raw = std::fs::read(&path).unwrap();
+        assert!(raw.len() >= HEADER_LEN);
+        assert_eq!(&raw[..MAGIC.len()], MAGIC);
+        assert_eq!(&raw[MAGIC.len()..HEADER_LEN], VERSION);
+    }
+
+    #[tokio::test]
+    async fn append_and_replay_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.aof");
+        let cancel = CancellationToken::new();
+        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel.clone())
+            .await
+            .unwrap();
+
+        engine
+            .append(Record::Set {
+                key: Bytes::from_static(b"k1"),
+                value: Bytes::from_static(b"v1"),
+                exp_ms: None,
+            })
+            .await
+            .unwrap();
+
+        engine
+            .append(Record::Del {
+                keys: vec![Bytes::from_static(b"k1")],
+            })
+            .await
+            .unwrap();
+
+        let store = MemoryStore::new();
+        engine.replay_into(&store).await.unwrap();
+        assert!(store.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn replay_applies_set_and_mset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.aof");
+        let cancel = CancellationToken::new();
+        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel.clone())
+            .await
+            .unwrap();
+
+        engine
+            .append(Record::Set {
+                key: Bytes::from_static(b"a"),
+                value: Bytes::from_static(b"1"),
+                exp_ms: None,
+            })
+            .await
+            .unwrap();
+
+        engine
+            .append(Record::MSet {
+                items: vec![
+                    (Bytes::from_static(b"b"), Bytes::from_static(b"2")),
+                    (Bytes::from_static(b"c"), Bytes::from_static(b"3")),
+                ],
+            })
+            .await
+            .unwrap();
+
+        let store = MemoryStore::new();
+        engine.replay_into(&store).await.unwrap();
+        assert_eq!(store.len().await, 3);
+    }
+
+    #[tokio::test]
+    async fn replay_applies_flushdb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.aof");
+        let cancel = CancellationToken::new();
+        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel.clone())
+            .await
+            .unwrap();
+
+        engine
+            .append(Record::Set {
+                key: Bytes::from_static(b"a"),
+                value: Bytes::from_static(b"1"),
+                exp_ms: None,
+            })
+            .await
+            .unwrap();
+        engine.append(Record::FlushDb).await.unwrap();
+
+        let store = MemoryStore::new();
+        engine.replay_into(&store).await.unwrap();
+        assert!(store.is_empty().await);
+    }
+
+    #[test]
+    fn validate_header_too_short() {
+        assert!(validate_header(b"short").is_err());
+    }
+
+    #[test]
+    fn validate_header_bad_magic() {
+        let mut raw = vec![0u8; HEADER_LEN];
+        raw[MAGIC.len()..HEADER_LEN].copy_from_slice(&VERSION);
+        assert!(validate_header(&raw).is_err());
+    }
+
+    #[test]
+    fn validate_header_bad_version() {
+        let mut raw = Vec::from(MAGIC);
+        raw.extend_from_slice(&[99, 99, 99]);
+        assert!(validate_header(&raw).is_err());
+    }
+
+    #[test]
+    fn validate_header_ok() {
+        let mut raw = Vec::from(MAGIC);
+        raw.extend_from_slice(&VERSION);
+        assert!(validate_header(&raw).is_ok());
+    }
+}

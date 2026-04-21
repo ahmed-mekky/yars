@@ -164,3 +164,209 @@ impl Store for MemoryStore {
         self.map.read().await.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(value: &[u8], exp: Expiry) -> Entry {
+        Entry {
+            value: Bytes::from(value.to_vec()),
+            exp,
+        }
+    }
+
+    #[tokio::test]
+    async fn set_and_get_round_trip() {
+        let store = MemoryStore::new();
+        let key = Bytes::from_static(b"k");
+        let val = entry(b"v", Expiry::None);
+        store.set(key.clone(), val.clone()).await;
+        let got = store.get(&key).await.unwrap();
+        assert_eq!(got.value, val.value);
+        assert!(matches!(got.exp, Expiry::None));
+    }
+
+    #[tokio::test]
+    async fn get_missing_returns_none() {
+        let store = MemoryStore::new();
+        assert!(store.get(&Bytes::from_static(b"missing")).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_expired_returns_none_and_cleans_up() {
+        let store = MemoryStore::new();
+        let key = Bytes::from_static(b"k");
+        store.set(key.clone(), entry(b"v", Expiry::At(0))).await;
+        assert!(store.get(&key).await.is_none());
+        assert_eq!(store.len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn get_non_expired_returns_some() {
+        let store = MemoryStore::new();
+        let key = Bytes::from_static(b"k");
+        let far_future = get_current_millis() + 1_000_000;
+        store
+            .set(key.clone(), entry(b"v", Expiry::At(far_future)))
+            .await;
+        let got = store.get(&key).await.unwrap();
+        assert_eq!(got.value, entry(b"v", Expiry::None).value);
+    }
+
+    #[tokio::test]
+    async fn del_removes_keys_and_returns_count() {
+        let store = MemoryStore::new();
+        let k1 = Bytes::from_static(b"a");
+        let k2 = Bytes::from_static(b"b");
+        let k3 = Bytes::from_static(b"c");
+        store.set(k1.clone(), entry(b"1", Expiry::None)).await;
+        store.set(k2.clone(), entry(b"2", Expiry::None)).await;
+        assert_eq!(store.del(&[k1.clone(), k2.clone(), k3]).await, 2);
+        assert!(store.get(&k1).await.is_none());
+        assert!(store.get(&k2).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn exists_counts_non_expired_keys() {
+        let store = MemoryStore::new();
+        let k1 = Bytes::from_static(b"a");
+        let k2 = Bytes::from_static(b"b");
+        let k3 = Bytes::from_static(b"c");
+        store.set(k1.clone(), entry(b"1", Expiry::None)).await;
+        store.set(k2.clone(), entry(b"2", Expiry::At(0))).await;
+        assert_eq!(store.exists(&[k1.clone(), k2, k3]).await, 1);
+    }
+
+    #[tokio::test]
+    async fn mget_returns_entries_in_order() {
+        let store = MemoryStore::new();
+        let k1 = Bytes::from_static(b"a");
+        let k2 = Bytes::from_static(b"b");
+        let k3 = Bytes::from_static(b"c");
+        store.set(k1.clone(), entry(b"1", Expiry::None)).await;
+        store.set(k3.clone(), entry(b"3", Expiry::None)).await;
+        let results = store.mget(&[k1.clone(), k2, k3.clone()]).await;
+        assert_eq!(results.len(), 3);
+        assert_eq!(
+            results[0].as_ref().unwrap().value,
+            entry(b"1", Expiry::None).value
+        );
+        assert!(results[1].is_none());
+        assert_eq!(
+            results[2].as_ref().unwrap().value,
+            entry(b"3", Expiry::None).value
+        );
+    }
+
+    #[tokio::test]
+    async fn mget_skips_expired_entries() {
+        let store = MemoryStore::new();
+        let k1 = Bytes::from_static(b"a");
+        store.set(k1.clone(), entry(b"1", Expiry::At(0))).await;
+        let results = store.mget(std::slice::from_ref(&k1)).await;
+        assert!(results[0].is_none());
+    }
+
+    #[tokio::test]
+    async fn mset_sets_multiple_keys() {
+        let store = MemoryStore::new();
+        let items = vec![
+            (Bytes::from_static(b"a"), Bytes::from_static(b"1")),
+            (Bytes::from_static(b"b"), Bytes::from_static(b"2")),
+        ];
+        store.mset(&items).await;
+        assert_eq!(
+            store.get(&Bytes::from_static(b"a")).await.unwrap().value,
+            Bytes::from_static(b"1")
+        );
+        assert_eq!(
+            store.get(&Bytes::from_static(b"b")).await.unwrap().value,
+            Bytes::from_static(b"2")
+        );
+    }
+
+    #[tokio::test]
+    async fn len_and_is_empty_and_clear() {
+        let store = MemoryStore::new();
+        assert!(store.is_empty().await);
+        store
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await;
+        assert_eq!(store.len().await, 1);
+        assert!(!store.is_empty().await);
+        store.clear().await;
+        assert_eq!(store.len().await, 0);
+        assert!(store.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn clear_resets_memory() {
+        let store = MemoryStore::new();
+        store
+            .set(Bytes::from_static(b"k"), entry(b"vv", Expiry::None))
+            .await;
+        assert!(store.used_memory().await > 0);
+        store.clear().await;
+        assert_eq!(store.used_memory().await, 0);
+    }
+
+    #[tokio::test]
+    async fn memory_tracks_updates() {
+        let store = MemoryStore::new();
+        let k = Bytes::from_static(b"k");
+        store.set(k.clone(), entry(b"old", Expiry::None)).await;
+        let mem_after_first = store.used_memory().await;
+        store
+            .set(k.clone(), entry(b"much_longer_value", Expiry::None))
+            .await;
+        let mem_after_second = store.used_memory().await;
+        assert!(mem_after_second > mem_after_first);
+        store.del(&[k]).await;
+        assert_eq!(store.used_memory().await, 0);
+    }
+
+    #[tokio::test]
+    async fn total_commands_starts_at_zero() {
+        let store = MemoryStore::new();
+        assert_eq!(store.total_commands(), 0);
+    }
+
+    #[tokio::test]
+    async fn increment_commands() {
+        let store = MemoryStore::new();
+        store.increment_commands();
+        store.increment_commands();
+        assert_eq!(store.total_commands(), 2);
+    }
+
+    #[tokio::test]
+    async fn uptime_is_nonzero_after_sleep() {
+        let store = MemoryStore::new();
+        assert_eq!(store.uptime_seconds(), 0);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let _ = store.uptime_seconds();
+    }
+
+    #[tokio::test]
+    async fn set_with_keep_preserves_existing_expiry() {
+        let store = MemoryStore::new();
+        let k = Bytes::from_static(b"k");
+        let far_future = get_current_millis() + 1_000_000;
+        store
+            .set(k.clone(), entry(b"v1", Expiry::At(far_future)))
+            .await;
+        let resolved = store.set(k.clone(), entry(b"v2", Expiry::Keep)).await;
+        assert!(matches!(resolved.exp, Expiry::At(t) if t == far_future));
+        let got = store.get(&k).await.unwrap();
+        assert!(matches!(got.exp, Expiry::At(t) if t == far_future));
+    }
+
+    #[tokio::test]
+    async fn set_with_keep_on_missing_uses_none() {
+        let store = MemoryStore::new();
+        let k = Bytes::from_static(b"k");
+        let resolved = store.set(k.clone(), entry(b"v", Expiry::Keep)).await;
+        assert!(matches!(resolved.exp, Expiry::None));
+    }
+}
