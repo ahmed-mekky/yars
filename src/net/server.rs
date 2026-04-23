@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use tokio::{net::TcpListener, sync::RwLock, task::JoinHandle};
@@ -41,6 +41,10 @@ impl Server {
             cancel,
             fsync_handle,
         })
+    }
+
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.listener.local_addr()?)
     }
 
     pub async fn run(self) -> Result<()> {
