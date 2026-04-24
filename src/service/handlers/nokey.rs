@@ -1,31 +1,34 @@
 use crate::{
     config::AppConfig,
     protocol::resp::Frame,
-    service::handlers::SetMutation,
-    store::{memory::MemoryStore, persistence::AofEngine, traits::Store},
+    service::handlers::CommandEffect,
+    store::{memory::MemoryStore, persistence::aof::Aof, traits::Store},
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::bytes::Bytes;
 
-pub async fn ping() -> (Frame, Option<SetMutation>) {
-    (Frame::SimpleString("PONG".into()), None)
+pub async fn ping() -> CommandEffect {
+    CommandEffect::Read(Frame::SimpleString("PONG".into()))
 }
 
-pub async fn echo(msg: Bytes) -> (Frame, Option<SetMutation>) {
-    (Frame::BulkString(msg), None)
+pub async fn echo(msg: Bytes) -> CommandEffect {
+    CommandEffect::Read(Frame::BulkString(msg))
 }
 
-pub async fn dbsize(store: &impl Store) -> (Frame, Option<SetMutation>) {
-    (Frame::Integer(store.len().await as i64), None)
+pub async fn dbsize(store: &impl Store) -> CommandEffect {
+    CommandEffect::Read(Frame::Integer(store.len().await as i64))
 }
 
-pub async fn flushdb(store: &impl Store) -> (Frame, Option<SetMutation>) {
+pub async fn flushdb(store: &impl Store) -> CommandEffect {
     store.clear().await;
-    (Frame::Integer(1), None)
+    CommandEffect::Write(
+        Frame::Integer(1),
+        crate::store::persistence::record::Record::FlushDb,
+    )
 }
 
-pub async fn info(store: &MemoryStore) -> (Frame, Option<SetMutation>) {
+pub async fn info(store: &MemoryStore) -> CommandEffect {
     let key_count = store.len().await as i64;
     let used_memory = store.used_memory().await;
     let uptime_seconds = store.uptime_seconds();
@@ -39,18 +42,15 @@ pub async fn info(store: &MemoryStore) -> (Frame, Option<SetMutation>) {
         uptime_seconds,
         total_commands
     );
-    (Frame::BulkString(info.into()), None)
+    CommandEffect::Read(Frame::BulkString(info.into()))
 }
 
-pub async fn config_get(
-    config: &Arc<RwLock<AppConfig>>,
-    pattern: Bytes,
-) -> (Frame, Option<SetMutation>) {
+pub async fn config_get(config: &Arc<RwLock<AppConfig>>, pattern: Bytes) -> CommandEffect {
     let Some(pattern) = std::str::from_utf8(&pattern)
         .ok()
         .map(|s| s.to_ascii_lowercase())
     else {
-        return (Frame::Error("ERR pattern is not valid UTF-8".into()), None);
+        return CommandEffect::Read(Frame::Error("ERR pattern is not valid UTF-8".into()));
     };
 
     let config = config.read().await;
@@ -71,24 +71,24 @@ pub async fn config_get(
         values.push(Frame::BulkString(config.fsync_mode.as_str().into()));
     }
 
-    (Frame::Array(values), None)
+    CommandEffect::Read(Frame::Array(values))
 }
 
 pub async fn config_set(
     config: &Arc<RwLock<AppConfig>>,
-    aof: &Option<Arc<AofEngine>>,
+    aof: &Arc<dyn Aof>,
     key: Bytes,
     value: Bytes,
-) -> (Frame, Option<SetMutation>) {
+) -> CommandEffect {
     let Some(key) = std::str::from_utf8(&key)
         .ok()
         .map(|s| s.to_ascii_lowercase())
     else {
-        return (Frame::Error("ERR key is not valid UTF-8".into()), None);
+        return CommandEffect::Read(Frame::Error("ERR key is not valid UTF-8".into()));
     };
 
     let Some(value) = std::str::from_utf8(&value).ok() else {
-        return (Frame::Error("ERR value is not a valid string".into()), None);
+        return CommandEffect::Read(Frame::Error("ERR value is not a valid string".into()));
     };
 
     match &key[..] {
@@ -96,12 +96,10 @@ pub async fn config_set(
             let mut config = config.write().await;
             match config.set_fsync_mode(value) {
                 Ok(()) => {
-                    if let Some(aof) = aof {
-                        aof.set_fsync_mode(config.fsync_mode);
-                    }
-                    (Frame::SimpleString("OK".to_string()), None)
+                    aof.set_fsync_mode(config.fsync_mode);
+                    CommandEffect::Read(Frame::SimpleString("OK".to_string()))
                 }
-                Err(e) => (Frame::Error(format!("ERR {e}")), None),
+                Err(e) => CommandEffect::Read(Frame::Error(format!("ERR {e}"))),
             }
         }
         "appendonly" => {
@@ -109,38 +107,37 @@ pub async fn config_set(
             match value.parse::<bool>() {
                 Ok(v) => {
                     config.append_only = v;
-                    (Frame::SimpleString("OK".into()), None)
+                    CommandEffect::Read(Frame::SimpleString("OK".into()))
                 }
-                Err(e) => (Frame::Error(format!("ERR {e}")), None),
+                Err(e) => CommandEffect::Read(Frame::Error(format!("ERR {e}"))),
             }
         }
         "appendfilename" => {
             let mut config = config.write().await;
             if value.is_empty() {
-                (Frame::Error("ERR empty filename".into()), None)
+                CommandEffect::Read(Frame::Error("ERR empty filename".into()))
             } else {
                 config.aof_path = config.data_dir.join(value);
-                (Frame::SimpleString("OK".into()), None)
+                CommandEffect::Read(Frame::SimpleString("OK".into()))
             }
         }
-        _ => (
-            Frame::Error("ERR unknown configuration option".into()),
-            None,
-        ),
+        _ => CommandEffect::Read(Frame::Error("ERR unknown configuration option".into())),
     }
 }
 
-pub async fn config_rewrite(config: &Arc<RwLock<AppConfig>>) -> (Frame, Option<SetMutation>) {
+pub async fn config_rewrite(config: &Arc<RwLock<AppConfig>>) -> CommandEffect {
     let config = config.read().await;
     match config.write_to_file() {
-        Ok(()) => (Frame::SimpleString("OK".into()), None),
-        Err(e) => (Frame::Error(format!("ERR {e}")), None),
+        Ok(()) => CommandEffect::Read(Frame::SimpleString("OK".into())),
+        Err(e) => CommandEffect::Read(Frame::Error(format!("ERR {e}"))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::handlers::tests::{read_frame, write_frame};
+    use crate::store::persistence::record::Record;
     use crate::store::{
         memory::MemoryStore,
         types::{Entry, Expiry},
@@ -158,16 +155,14 @@ mod tests {
 
     #[tokio::test]
     async fn ping_returns_pong() {
-        let (frame, mutation) = ping().await;
-        assert!(matches!(frame, Frame::SimpleString(s) if s == "PONG"));
-        assert!(mutation.is_none());
+        let frame = read_frame(ping().await);
+        assert_eq!(frame, Frame::SimpleString("PONG".into()));
     }
 
     #[tokio::test]
     async fn echo_returns_bulk_string() {
-        let (frame, mutation) = echo(Bytes::from_static(b"hello")).await;
-        assert!(matches!(frame, Frame::BulkString(b) if b.as_ref() == b"hello"));
-        assert!(mutation.is_none());
+        let frame = read_frame(echo(Bytes::from_static(b"hello")).await);
+        assert_eq!(frame, Frame::BulkString("hello".into()));
     }
 
     #[tokio::test]
@@ -182,9 +177,8 @@ mod tests {
                 },
             )
             .await;
-        let (frame, mutation) = dbsize(&store).await;
-        assert!(matches!(frame, Frame::Integer(1)));
-        assert!(mutation.is_none());
+        let frame = read_frame(dbsize(&store).await);
+        assert_eq!(frame, Frame::Integer(1));
     }
 
     #[tokio::test]
@@ -199,17 +193,16 @@ mod tests {
                 },
             )
             .await;
-        let (frame, mutation) = flushdb(&store).await;
-        assert!(matches!(frame, Frame::Integer(1)));
-        assert!(mutation.is_none());
+        let (frame, record) = write_frame(flushdb(&store).await);
+        assert_eq!(frame, Frame::Integer(1));
+        assert!(matches!(record, Record::FlushDb));
         assert!(store.is_empty().await);
     }
 
     #[tokio::test]
     async fn info_contains_expected_fields() {
         let store = MemoryStore::new();
-        let (frame, mutation) = info(&store).await;
-        assert!(mutation.is_none());
+        let frame = read_frame(info(&store).await);
         let Frame::BulkString(data) = frame else {
             panic!("expected bulk string")
         };
@@ -224,8 +217,7 @@ mod tests {
     #[tokio::test]
     async fn config_get_star_returns_all() {
         let config = make_config();
-        let (frame, mutation) = config_get(&config, Bytes::from_static(b"*")).await;
-        assert!(mutation.is_none());
+        let frame = read_frame(config_get(&config, Bytes::from_static(b"*")).await);
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
@@ -235,21 +227,19 @@ mod tests {
     #[tokio::test]
     async fn config_get_specific_key() {
         let config = make_config();
-        let (frame, mutation) = config_get(&config, Bytes::from_static(b"appendonly")).await;
-        assert!(mutation.is_none());
+        let frame = read_frame(config_get(&config, Bytes::from_static(b"appendonly")).await);
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
         assert_eq!(items.len(), 2);
-        assert!(matches!(&items[0], Frame::BulkString(b) if b.as_ref() == b"appendonly"));
-        assert!(matches!(&items[1], Frame::BulkString(b) if b.as_ref() == b"true"));
+        assert_eq!(items[0], Frame::BulkString("appendonly".into()));
+        assert_eq!(items[1], Frame::BulkString("true".into()));
     }
 
     #[tokio::test]
     async fn config_get_unknown_returns_empty() {
         let config = make_config();
-        let (frame, mutation) = config_get(&config, Bytes::from_static(b"unknown")).await;
-        assert!(mutation.is_none());
+        let frame = read_frame(config_get(&config, Bytes::from_static(b"unknown")).await);
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
@@ -259,15 +249,18 @@ mod tests {
     #[tokio::test]
     async fn config_set_fsync_mode_ok() {
         let config = make_config();
-        let (frame, mutation) = config_set(
-            &config,
-            &None,
-            Bytes::from_static(b"appendfsync"),
-            Bytes::from_static(b"no"),
-        )
-        .await;
-        assert!(matches!(frame, Frame::SimpleString(s) if s == "OK"));
-        assert!(mutation.is_none());
+        let aof: Arc<dyn crate::store::persistence::aof::Aof> =
+            Arc::new(crate::store::persistence::aof::NoopAof);
+        let frame = read_frame(
+            config_set(
+                &config,
+                &aof,
+                Bytes::from_static(b"appendfsync"),
+                Bytes::from_static(b"no"),
+            )
+            .await,
+        );
+        assert_eq!(frame, Frame::SimpleString("OK".into()));
         let cfg = config.read().await;
         assert!(matches!(cfg.fsync_mode, crate::config::FsyncMode::No));
     }
@@ -275,28 +268,35 @@ mod tests {
     #[tokio::test]
     async fn config_set_appendonly_ok() {
         let config = make_config();
-        let (frame, _mutation) = config_set(
-            &config,
-            &None,
-            Bytes::from_static(b"appendonly"),
-            Bytes::from_static(b"false"),
-        )
-        .await;
-        assert!(matches!(frame, Frame::SimpleString(s) if s == "OK"));
+        let aof: Arc<dyn crate::store::persistence::aof::Aof> =
+            Arc::new(crate::store::persistence::aof::NoopAof);
+        let frame = read_frame(
+            config_set(
+                &config,
+                &aof,
+                Bytes::from_static(b"appendonly"),
+                Bytes::from_static(b"false"),
+            )
+            .await,
+        );
+        assert_eq!(frame, Frame::SimpleString("OK".into()));
         assert!(!config.read().await.append_only);
     }
 
     #[tokio::test]
     async fn config_set_unknown_returns_error() {
         let config = make_config();
-        let (frame, mutation) = config_set(
-            &config,
-            &None,
-            Bytes::from_static(b"unknown"),
-            Bytes::from_static(b"v"),
-        )
-        .await;
+        let aof: Arc<dyn crate::store::persistence::aof::Aof> =
+            Arc::new(crate::store::persistence::aof::NoopAof);
+        let frame = read_frame(
+            config_set(
+                &config,
+                &aof,
+                Bytes::from_static(b"unknown"),
+                Bytes::from_static(b"v"),
+            )
+            .await,
+        );
         assert!(matches!(frame, Frame::Error(_)));
-        assert!(mutation.is_none());
     }
 }

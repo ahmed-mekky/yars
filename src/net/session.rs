@@ -2,41 +2,24 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
-use tokio::{net::TcpStream, sync::RwLock};
-use tokio_util::{
-    codec::{Decoder, Framed},
-    sync::CancellationToken,
-};
+use tokio::net::TcpStream;
+use tokio_util::codec::{Decoder, Framed};
 
 use crate::{
-    config::AppConfig,
     protocol::{command::Command, resp::RespCodec},
-    service::dispatcher,
-    store::{memory::MemoryStore, persistence::AofEngine},
+    service::context::ServerContext,
 };
 
 pub struct Session {
     framed: Framed<TcpStream, RespCodec>,
-    store: Arc<MemoryStore>,
-    config: Arc<RwLock<AppConfig>>,
-    aof: Option<Arc<AofEngine>>,
-    cancel: CancellationToken,
+    ctx: Arc<ServerContext>,
 }
 
 impl Session {
-    pub fn new(
-        socket: TcpStream,
-        store: Arc<MemoryStore>,
-        config: Arc<RwLock<AppConfig>>,
-        aof: Option<Arc<AofEngine>>,
-        cancel: CancellationToken,
-    ) -> Self {
+    pub fn new(socket: TcpStream, ctx: Arc<ServerContext>) -> Self {
         Self {
             framed: RespCodec.framed(socket),
-            store,
-            config,
-            aof,
-            cancel,
+            ctx,
         }
     }
 
@@ -53,15 +36,15 @@ impl Session {
                             self.framed
                                 .send(crate::protocol::resp::Frame::SimpleString("OK".into()))
                                 .await?;
-                            self.cancel.cancel();
+                            self.ctx.cancel.cancel();
                             break;
                         }
-                        Ok(cmd) => dispatcher::execute(&self.store, &self.config, &self.aof, cmd).await,
+                        Ok(cmd) => self.ctx.execute(cmd).await,
                         Err(err_frame) => err_frame,
                     };
                     self.framed.send(result).await?;
                 }
-                _ = self.cancel.cancelled() => {
+                _ = self.ctx.cancel.cancelled() => {
                     break;
                 }
             }

@@ -1,3 +1,4 @@
+pub mod aof;
 pub mod codec;
 pub mod record;
 
@@ -41,14 +42,12 @@ pub struct AofEngine {
     fsync_mode: std::sync::Mutex<FsyncMode>,
     writer: Arc<Mutex<File>>,
     dirty: Arc<AtomicBool>,
+    fsync_handle: std::sync::Mutex<Option<JoinHandle<()>>>,
+    cancel: CancellationToken,
 }
 
 impl AofEngine {
-    pub async fn open(
-        path: PathBuf,
-        fsync_mode: FsyncMode,
-        cancel: CancellationToken,
-    ) -> Result<(Self, Option<JoinHandle<()>>)> {
+    pub async fn open(path: PathBuf, fsync_mode: FsyncMode) -> Result<Self> {
         ensure_parent_dir(&path).await?;
 
         let mut file = OpenOptions::new()
@@ -69,14 +68,16 @@ impl AofEngine {
 
         let writer = Arc::new(Mutex::new(file.try_clone().await?));
         let dirty = Arc::new(AtomicBool::new(false));
+        let cancel = CancellationToken::new();
 
         let fsync_handle = if matches!(fsync_mode, FsyncMode::EverySec) {
             let writer = writer.clone();
             let dirty = dirty.clone();
+            let cancel_clone = cancel.clone();
             Some(tokio::spawn(async move {
                 loop {
                     tokio::select! {
-                        _ = cancel.cancelled() => {
+                        _ = cancel_clone.cancelled() => {
                             if dirty.swap(false, Ordering::Relaxed) {
                                 let file = writer.lock().await;
                                 if let Err(err) = file.sync_data().await {
@@ -101,14 +102,13 @@ impl AofEngine {
             None
         };
 
-        Ok((
-            Self {
-                fsync_mode: std::sync::Mutex::new(fsync_mode),
-                writer,
-                dirty,
-            },
-            fsync_handle,
-        ))
+        Ok(Self {
+            fsync_mode: std::sync::Mutex::new(fsync_mode),
+            writer,
+            dirty,
+            fsync_handle: std::sync::Mutex::new(fsync_handle),
+            cancel,
+        })
     }
 
     pub async fn append(&self, record: Record) -> Result<()> {
@@ -135,7 +135,7 @@ impl AofEngine {
         *self.fsync_mode.lock().unwrap() = mode;
     }
 
-    pub async fn replay_into(&self, store: &impl Store) -> Result<()> {
+    pub async fn replay_into(&self, store: &dyn Store) -> Result<()> {
         let mut file = self.writer.lock().await;
         file.seek(std::io::SeekFrom::Start(0)).await?;
         let mut raw = Vec::new();
@@ -164,6 +164,33 @@ impl AofEngine {
 
         Ok(())
     }
+
+    pub async fn shutdown(&self) {
+        self.cancel.cancel();
+        let handle = self.fsync_handle.lock().unwrap().take();
+        if let Some(handle) = handle {
+            handle.await.ok();
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl aof::Aof for AofEngine {
+    async fn append(&self, record: Record) -> Result<()> {
+        self.append(record).await
+    }
+
+    async fn replay_into(&self, store: &dyn Store) -> Result<()> {
+        self.replay_into(store).await
+    }
+
+    fn set_fsync_mode(&self, mode: FsyncMode) {
+        self.set_fsync_mode(mode);
+    }
+
+    async fn shutdown(&self) {
+        self.shutdown().await;
+    }
 }
 
 async fn ensure_parent_dir(path: &Path) -> Result<()> {
@@ -186,7 +213,7 @@ fn validate_header(raw: &[u8]) -> Result<()> {
     Ok(())
 }
 
-async fn apply_record(store: &impl Store, record: Record) -> Result<()> {
+async fn apply_record(store: &dyn Store, record: Record) -> Result<()> {
     match record {
         Record::Set { key, value, exp_ms } => {
             let exp = match exp_ms {
@@ -218,10 +245,7 @@ mod tests {
     async fn open_creates_header_on_new_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.aof");
-        let cancel = CancellationToken::new();
-        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel)
-            .await
-            .unwrap();
+        let engine = AofEngine::open(path.clone(), FsyncMode::No).await.unwrap();
 
         drop(engine);
 
@@ -235,10 +259,7 @@ mod tests {
     async fn append_and_replay_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.aof");
-        let cancel = CancellationToken::new();
-        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel.clone())
-            .await
-            .unwrap();
+        let engine = AofEngine::open(path.clone(), FsyncMode::No).await.unwrap();
 
         engine
             .append(Record::Set {
@@ -265,10 +286,7 @@ mod tests {
     async fn replay_applies_set_and_mset() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.aof");
-        let cancel = CancellationToken::new();
-        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel.clone())
-            .await
-            .unwrap();
+        let engine = AofEngine::open(path.clone(), FsyncMode::No).await.unwrap();
 
         engine
             .append(Record::Set {
@@ -298,10 +316,7 @@ mod tests {
     async fn replay_applies_flushdb() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.aof");
-        let cancel = CancellationToken::new();
-        let (engine, _handle) = AofEngine::open(path.clone(), FsyncMode::No, cancel.clone())
-            .await
-            .unwrap();
+        let engine = AofEngine::open(path.clone(), FsyncMode::No).await.unwrap();
 
         engine
             .append(Record::Set {

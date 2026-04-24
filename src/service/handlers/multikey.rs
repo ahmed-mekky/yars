@@ -1,15 +1,19 @@
-use crate::{protocol::resp::Frame, service::handlers::SetMutation, store::traits::Store};
+use crate::{protocol::resp::Frame, service::handlers::CommandEffect, store::traits::Store};
 use tokio_util::bytes::Bytes;
 
-pub async fn del(store: &impl Store, keys: Vec<Bytes>) -> (Frame, Option<SetMutation>) {
-    (Frame::Integer(store.del(&keys).await), None)
+pub async fn del(store: &impl Store, keys: Vec<Bytes>) -> CommandEffect {
+    let count = store.del(&keys).await;
+    CommandEffect::Write(
+        Frame::Integer(count),
+        crate::store::persistence::record::Record::Del { keys },
+    )
 }
 
-pub async fn exists(store: &impl Store, keys: Vec<Bytes>) -> (Frame, Option<SetMutation>) {
-    (Frame::Integer(store.exists(&keys).await), None)
+pub async fn exists(store: &impl Store, keys: Vec<Bytes>) -> CommandEffect {
+    CommandEffect::Read(Frame::Integer(store.exists(&keys).await))
 }
 
-pub async fn mget(store: &impl Store, keys: Vec<Bytes>) -> (Frame, Option<SetMutation>) {
+pub async fn mget(store: &impl Store, keys: Vec<Bytes>) -> CommandEffect {
     let values = store
         .mget(&keys)
         .await
@@ -19,28 +23,23 @@ pub async fn mget(store: &impl Store, keys: Vec<Bytes>) -> (Frame, Option<SetMut
             None => Frame::NullBulkString,
         })
         .collect();
-    (Frame::Array(values), None)
+    CommandEffect::Read(Frame::Array(values))
 }
 
-pub async fn mset(store: &impl Store, items: Vec<(Bytes, Bytes)>) -> (Frame, Option<SetMutation>) {
+pub async fn mset(store: &impl Store, items: Vec<(Bytes, Bytes)>) -> CommandEffect {
     store.mset(&items).await;
-    (Frame::SimpleString("OK".into()), None)
+    CommandEffect::Write(
+        Frame::SimpleString("OK".into()),
+        crate::store::persistence::record::Record::MSet { items },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{
-        memory::MemoryStore,
-        types::{Entry, Expiry},
-    };
-
-    fn entry(value: &[u8], exp: Expiry) -> Entry {
-        Entry {
-            value: Bytes::from(value.to_vec()),
-            exp,
-        }
-    }
+    use crate::service::handlers::tests::{entry, read_frame, write_frame};
+    use crate::store::persistence::record::Record;
+    use crate::store::{memory::MemoryStore, types::Expiry};
 
     #[tokio::test]
     async fn del_returns_count() {
@@ -51,13 +50,17 @@ mod tests {
         store
             .set(Bytes::from_static(b"b"), entry(b"2", Expiry::None))
             .await;
-        let (frame, mutation) = del(
-            &store,
-            vec![Bytes::from_static(b"a"), Bytes::from_static(b"c")],
-        )
-        .await;
-        assert!(matches!(frame, Frame::Integer(1)));
-        assert!(mutation.is_none());
+        let (frame, record) = write_frame(
+            del(
+                &store,
+                vec![Bytes::from_static(b"a"), Bytes::from_static(b"c")],
+            )
+            .await,
+        );
+        assert_eq!(frame, Frame::Integer(1));
+        assert!(
+            matches!(record, Record::Del { keys } if keys == vec![Bytes::from_static(b"a"), Bytes::from_static(b"c")])
+        );
     }
 
     #[tokio::test]
@@ -66,13 +69,14 @@ mod tests {
         store
             .set(Bytes::from_static(b"a"), entry(b"1", Expiry::None))
             .await;
-        let (frame, mutation) = exists(
-            &store,
-            vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
-        )
-        .await;
-        assert!(matches!(frame, Frame::Integer(1)));
-        assert!(mutation.is_none());
+        let frame = read_frame(
+            exists(
+                &store,
+                vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
+            )
+            .await,
+        );
+        assert_eq!(frame, Frame::Integer(1));
     }
 
     #[tokio::test]
@@ -81,18 +85,19 @@ mod tests {
         store
             .set(Bytes::from_static(b"a"), entry(b"1", Expiry::None))
             .await;
-        let (frame, mutation) = mget(
-            &store,
-            vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
-        )
-        .await;
-        assert!(mutation.is_none());
+        let frame = read_frame(
+            mget(
+                &store,
+                vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
+            )
+            .await,
+        );
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
         assert_eq!(items.len(), 2);
-        assert!(matches!(&items[0], Frame::BulkString(b) if b.as_ref() == b"1"));
-        assert!(matches!(&items[1], Frame::NullBulkString));
+        assert_eq!(items[0], Frame::BulkString("1".into()));
+        assert_eq!(items[1], Frame::NullBulkString);
     }
 
     #[tokio::test]
@@ -102,9 +107,9 @@ mod tests {
             (Bytes::from_static(b"a"), Bytes::from_static(b"1")),
             (Bytes::from_static(b"b"), Bytes::from_static(b"2")),
         ];
-        let (frame, mutation) = mset(&store, items).await;
-        assert!(matches!(frame, Frame::SimpleString(s) if s == "OK"));
-        assert!(mutation.is_none());
+        let (frame, record) = write_frame(mset(&store, items.clone()).await);
+        assert_eq!(frame, Frame::SimpleString("OK".into()));
+        assert!(matches!(record, Record::MSet { items: ri } if ri == items));
         assert_eq!(
             store.get(&Bytes::from_static(b"a")).await.unwrap().value,
             Bytes::from_static(b"1")
