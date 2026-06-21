@@ -27,8 +27,8 @@ use tokio_util::{
 use crate::{
     config::FsyncMode,
     store::{
+        memory::MemoryStore,
         persistence::{codec::RecordCodec, record::Record},
-        traits::Store,
         types::{Entry, Expiry},
     },
     utils::pkg::parse_version,
@@ -135,7 +135,7 @@ impl AofEngine {
         *self.fsync_mode.lock().unwrap() = mode;
     }
 
-    pub async fn replay_into(&self, store: &dyn Store) -> Result<()> {
+    pub async fn replay_into(&self, store: &mut MemoryStore) -> Result<()> {
         let mut file = self.writer.lock().await;
         file.seek(std::io::SeekFrom::Start(0)).await?;
         let mut raw = Vec::new();
@@ -173,26 +173,6 @@ impl AofEngine {
         }
     }
 }
-
-#[async_trait::async_trait]
-impl aof::Aof for AofEngine {
-    async fn append(&self, record: Record) -> Result<()> {
-        self.append(record).await
-    }
-
-    async fn replay_into(&self, store: &dyn Store) -> Result<()> {
-        self.replay_into(store).await
-    }
-
-    fn set_fsync_mode(&self, mode: FsyncMode) {
-        self.set_fsync_mode(mode);
-    }
-
-    async fn shutdown(&self) {
-        self.shutdown().await;
-    }
-}
-
 async fn ensure_parent_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -213,23 +193,25 @@ fn validate_header(raw: &[u8]) -> Result<()> {
     Ok(())
 }
 
-async fn apply_record(store: &dyn Store, record: Record) -> Result<()> {
+async fn apply_record(store: &mut MemoryStore, record: Record) -> Result<()> {
     match record {
         Record::Set { key, value, exp_ms } => {
             let exp = match exp_ms {
                 Some(at) => Expiry::At(at),
                 None => Expiry::None,
             };
-            store.set(key, Entry { value, exp }).await;
+            store.set(key, Entry { value, exp });
         }
         Record::Del { keys } => {
-            store.del(&keys).await;
+            for key in keys {
+                store.del(&key);
+            }
         }
         Record::MSet { items } => {
-            store.mset(&items).await;
+            store.mset(&items);
         }
         Record::FlushDb => {
-            store.clear().await;
+            store.clear();
         }
     }
     Ok(())
@@ -277,9 +259,9 @@ mod tests {
             .await
             .unwrap();
 
-        let store = MemoryStore::new();
-        engine.replay_into(&store).await.unwrap();
-        assert!(store.is_empty().await);
+        let mut store = MemoryStore::new();
+        engine.replay_into(&mut store).await.unwrap();
+        assert!(store.is_empty());
     }
 
     #[tokio::test]
@@ -307,9 +289,9 @@ mod tests {
             .await
             .unwrap();
 
-        let store = MemoryStore::new();
-        engine.replay_into(&store).await.unwrap();
-        assert_eq!(store.len().await, 3);
+        let mut store = MemoryStore::new();
+        engine.replay_into(&mut store).await.unwrap();
+        assert_eq!(store.len(), 3);
     }
 
     #[tokio::test]
@@ -328,9 +310,9 @@ mod tests {
             .unwrap();
         engine.append(Record::FlushDb).await.unwrap();
 
-        let store = MemoryStore::new();
-        engine.replay_into(&store).await.unwrap();
-        assert!(store.is_empty().await);
+        let mut store = MemoryStore::new();
+        engine.replay_into(&mut store).await.unwrap();
+        assert!(store.is_empty());
     }
 
     #[test]

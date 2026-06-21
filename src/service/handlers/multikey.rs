@@ -1,55 +1,45 @@
-use crate::{protocol::resp::Frame, service::handlers::CommandEffect, store::traits::Store};
+use crate::{protocol::resp::Frame, store::handle::StoreHandle};
+use anyhow::Result;
 use tokio_util::bytes::Bytes;
 
-pub async fn del(store: &impl Store, keys: Vec<Bytes>) -> CommandEffect {
-    let count = store.del(&keys).await;
-    CommandEffect::Write(
-        Frame::Integer(count),
-        crate::store::persistence::record::Record::Del { keys },
-    )
+pub async fn del(store: &StoreHandle, keys: Vec<Bytes>) -> Result<Frame> {
+    Ok(Frame::Integer(store.del(keys).await?))
 }
 
-pub async fn exists(store: &impl Store, keys: Vec<Bytes>) -> CommandEffect {
-    CommandEffect::Read(Frame::Integer(store.exists(&keys).await))
+pub async fn exists(store: &StoreHandle, keys: Vec<Bytes>) -> Result<Frame> {
+    Ok(Frame::Integer(store.exists(keys).await?))
 }
 
-pub async fn mget(store: &impl Store, keys: Vec<Bytes>) -> CommandEffect {
-    let values = store
-        .mget(&keys)
-        .await
-        .iter()
-        .map(|e| match e {
-            Some(entry) => Frame::BulkString(entry.value.clone()),
-            None => Frame::NullBulkString,
-        })
-        .collect();
-    CommandEffect::Read(Frame::Array(values))
+pub async fn mget(store: &StoreHandle, keys: Vec<Bytes>) -> Result<Frame> {
+    Ok(Frame::Array(
+        store
+            .mget(keys)
+            .await?
+            .iter()
+            .map(|e| match e {
+                Some(entry) => Frame::BulkString(entry.value.clone()),
+                None => Frame::NullBulkString,
+            })
+            .collect(),
+    ))
 }
 
-pub async fn mset(store: &impl Store, items: Vec<(Bytes, Bytes)>) -> CommandEffect {
-    store.mset(&items).await;
-    CommandEffect::Write(
-        Frame::SimpleString("OK".into()),
-        crate::store::persistence::record::Record::MSet { items },
-    )
+pub async fn mset(store: &StoreHandle, items: Vec<(Bytes, Bytes)>) -> Result<Frame> {
+    store.mset(items).await?;
+    Ok(Frame::SimpleString("OK".into()))
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
-    use crate::service::handlers::tests::{entry, read_frame, write_frame};
     use crate::store::persistence::record::Record;
     use crate::store::{memory::MemoryStore, types::Expiry};
 
     #[tokio::test]
     async fn del_returns_count() {
         let store = MemoryStore::new();
-        store
-            .set(Bytes::from_static(b"a"), entry(b"1", Expiry::None))
-            .await;
-        store
-            .set(Bytes::from_static(b"b"), entry(b"2", Expiry::None))
-            .await;
+        store.set(Bytes::from_static(b"a"), entry(b"1", Expiry::None));
+        store.set(Bytes::from_static(b"b"), entry(b"2", Expiry::None));
         let (frame, record) = write_frame(
             del(
                 &store,

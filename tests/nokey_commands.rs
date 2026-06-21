@@ -70,7 +70,7 @@ async fn shutdown_returns_ok_and_stops_server() {
     let response = send_cmd(&mut framed, &["SHUTDOWN"]).await.unwrap();
     assert_eq!(response, Frame::SimpleString("OK".into()));
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(200));
     assert!(connect(port).await.is_err());
 
     let result = tokio::time::timeout(tokio::time::Duration::from_secs(5), handle)

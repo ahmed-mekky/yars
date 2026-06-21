@@ -39,7 +39,7 @@ impl Session {
                             self.ctx.cancel.cancel();
                             break;
                         }
-                        Ok(cmd) => self.ctx.execute(cmd).await,
+                        Ok(cmd) => self.ctx.execute(&cmd).await.unwrap_or_else(|e|crate::protocol::resp::Frame::Error(e.to_string())),
                         Err(err_frame) => err_frame,
                     };
                     self.framed.send(result).await?;
