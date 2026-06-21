@@ -5,7 +5,8 @@ use crate::{
         multikey::{del, exists, mget, mset},
         nokey::{config_get, config_rewrite, config_set, dbsize, echo, flushdb, info, ping},
         singlekey::{
-            append, decr, expire, get, getdel, getset, incr, persist, pttl, set, setnx, strlen, ttl,
+            append, decr, expire, get, getdel, getset, incr, persist, pexpire, pttl, set, setnx,
+            strlen, ttl,
         },
     },
     store::{actor::StoreActor, handle::StoreHandle, memory::MemoryStore, persistence::aof::Aof},
@@ -63,7 +64,7 @@ impl ServerContext {
                 expire(store, key.clone(), *ttl, get_current_millis()).await
             }
             Command::PEXPIRE { key, ttl } => {
-                expire(store, key.clone(), *ttl, get_current_millis()).await
+                pexpire(store, key.clone(), *ttl, get_current_millis()).await
             }
             Command::DEL { keys } => del(store, keys.clone()).await,
             Command::EXISTS { keys } => exists(store, keys.clone()).await,

@@ -29,7 +29,7 @@ impl StoreHandle {
             Some(Ok(StoreResponse::Get(entry))) => Ok(entry),
             Some(Ok(_)) => Err(anyhow::anyhow!("Unexpected response")),
             Some(Err(e)) => Err(e),
-            None => Ok(None),
+            None => Err(anyhow::anyhow!("store actor unavailable")),
         }
     }
     pub async fn set(&self, key: Bytes, entry: Entry) -> Result<()> {
@@ -333,7 +333,7 @@ impl StoreHandle {
             Some(Ok(StoreResponse::MGet(entry))) => Ok(entry),
             Some(Ok(_)) => Err(anyhow::anyhow!("Unexpected response")),
             Some(Err(e)) => Err(e),
-            None => Ok(vec![None]),
+            None => Err(anyhow::anyhow!("store actor unavailable")),
         }
     }
 

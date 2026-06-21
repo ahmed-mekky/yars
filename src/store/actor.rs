@@ -110,8 +110,8 @@ impl StoreActor {
         match req {
             StoreRequest::Get(key) => ActorResult::Read(StoreResponse::Get(self.store.get(&key))),
             StoreRequest::Set(key, entry) => {
-                let entry = self.store.set(key.clone(), entry.clone());
-                ActorResult::Write(StoreResponse::Set, to_set_record(key, entry))
+                let resolved = self.store.set(key.clone(), entry.clone());
+                ActorResult::Write(StoreResponse::Set, to_set_record(key, resolved))
             }
             StoreRequest::Del(keys) => ActorResult::Write(
                 StoreResponse::Del(keys.iter().map(|k| self.store.del(k)).sum()),
@@ -140,11 +140,8 @@ impl StoreActor {
                 Record::Del { keys: vec![key] },
             ),
             StoreRequest::GetSet(key, entry) => {
-                let result = self.store.getset(key.clone(), entry.clone());
-                ActorResult::Write(
-                    StoreResponse::GetSet(result.0),
-                    to_set_record(key, result.1),
-                )
+                let (old, resolved) = self.store.getset(key.clone(), entry.clone());
+                ActorResult::Write(StoreResponse::GetSet(old), to_set_record(key, resolved))
             }
             StoreRequest::SetNx(key, entry) => match self.store.setnx(key.clone(), entry.clone()) {
                 true => ActorResult::Write(StoreResponse::SetNx(true), to_set_record(key, entry)),
@@ -224,7 +221,12 @@ impl StoreActor {
     }
 
     async fn process(&mut self, msg: StoreMessage) {
-        self.store.increment_commands();
+        if !matches!(
+            msg.request,
+            StoreRequest::Replay | StoreRequest::Shutdown | StoreRequest::SetFsyncMode(_)
+        ) {
+            self.store.increment_commands();
+        }
         match self.handle(msg.request).await {
             ActorResult::Read(res) => {
                 let _ = msg.respond_to.send(Ok(res));

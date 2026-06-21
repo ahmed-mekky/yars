@@ -269,7 +269,7 @@ impl MemoryStore {
         match self.get(&key) {
             None => -2,
             Some(entry) => match entry.exp {
-                Expiry::At(exp) => exp.saturating_sub(now / 1000) as i64,
+                Expiry::At(exp) => (exp.saturating_sub(now) / 1000) as i64,
                 Expiry::None | Expiry::Keep => -1,
             },
         }
