@@ -276,7 +276,7 @@ impl StoreHandle {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(StoreMessage {
-                request: StoreRequest::Clear,
+                request: StoreRequest::Info,
                 respond_to: tx,
             })
             .await
@@ -389,13 +389,13 @@ impl StoreHandle {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(StoreMessage {
-                request: StoreRequest::Shutdown,
+                request: StoreRequest::Replay,
                 respond_to: tx,
             })
             .await
             .ok();
         match rx.await.ok() {
-            Some(Ok(StoreResponse::Shutdown)) => Ok(()),
+            Some(Ok(StoreResponse::Replay)) => Ok(()),
             Some(Err(e)) => Err(e),
             _ => Err(anyhow::anyhow!("Unexpected error")),
         }

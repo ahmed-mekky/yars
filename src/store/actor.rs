@@ -167,7 +167,7 @@ impl StoreActor {
             }
             StoreRequest::Strlen(key) => {
                 let result = self.store.strlen(key.clone());
-                ActorResult::Read(StoreResponse::Decr(result))
+                ActorResult::Read(StoreResponse::Strlen(result))
             }
             StoreRequest::Append(key, value) => {
                 let entry = self.store.append(key.clone(), value);
