@@ -180,7 +180,7 @@ impl StoreActor {
                 None => ActorResult::Read(StoreResponse::Persist(false)),
             },
             StoreRequest::Expire(key, expiry, now) => {
-                match self.store.pexpire(key.clone(), expiry * 1000, now) {
+                match self.store.pexpire(key.clone(), expiry, now) {
                     Some(entry) => {
                         ActorResult::Write(StoreResponse::Expire(true), to_set_record(key, entry))
                     }

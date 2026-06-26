@@ -29,59 +29,61 @@ pub async fn mset(store: &StoreHandle, items: Vec<(Bytes, Bytes)>) -> Result<Fra
     Ok(Frame::SimpleString("OK".into()))
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::persistence::record::Record;
-    use crate::store::{memory::MemoryStore, types::Expiry};
+    use crate::service::handlers::tests::{entry, spawn_test_store};
+    use crate::store::types::Expiry;
 
     #[tokio::test]
     async fn del_returns_count() {
-        let store = MemoryStore::new();
-        store.set(Bytes::from_static(b"a"), entry(b"1", Expiry::None));
-        store.set(Bytes::from_static(b"b"), entry(b"2", Expiry::None));
-        let (frame, record) = write_frame(
-            del(
-                &store,
-                vec![Bytes::from_static(b"a"), Bytes::from_static(b"c")],
-            )
-            .await,
-        );
+        let store = spawn_test_store();
+        store
+            .set(Bytes::from_static(b"a"), entry(b"1", Expiry::None))
+            .await
+            .unwrap();
+        store
+            .set(Bytes::from_static(b"b"), entry(b"2", Expiry::None))
+            .await
+            .unwrap();
+        let frame = del(
+            &store,
+            vec![Bytes::from_static(b"a"), Bytes::from_static(b"c")],
+        )
+        .await
+        .unwrap();
         assert_eq!(frame, Frame::Integer(1));
-        assert!(
-            matches!(record, Record::Del { keys } if keys == vec![Bytes::from_static(b"a"), Bytes::from_static(b"c")])
-        );
     }
 
     #[tokio::test]
     async fn exists_returns_count() {
-        let store = MemoryStore::new();
+        let store = spawn_test_store();
         store
             .set(Bytes::from_static(b"a"), entry(b"1", Expiry::None))
-            .await;
-        let frame = read_frame(
-            exists(
-                &store,
-                vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
-            )
-            .await,
-        );
+            .await
+            .unwrap();
+        let frame = exists(
+            &store,
+            vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
+        )
+        .await
+        .unwrap();
         assert_eq!(frame, Frame::Integer(1));
     }
 
     #[tokio::test]
     async fn mget_returns_array() {
-        let store = MemoryStore::new();
+        let store = spawn_test_store();
         store
             .set(Bytes::from_static(b"a"), entry(b"1", Expiry::None))
-            .await;
-        let frame = read_frame(
-            mget(
-                &store,
-                vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
-            )
-            .await,
-        );
+            .await
+            .unwrap();
+        let frame = mget(
+            &store,
+            vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
+        )
+        .await
+        .unwrap();
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
@@ -92,20 +94,29 @@ mod tests {
 
     #[tokio::test]
     async fn mset_returns_ok() {
-        let store = MemoryStore::new();
+        let store = spawn_test_store();
         let items = vec![
             (Bytes::from_static(b"a"), Bytes::from_static(b"1")),
             (Bytes::from_static(b"b"), Bytes::from_static(b"2")),
         ];
-        let (frame, record) = write_frame(mset(&store, items.clone()).await);
+        let frame = mset(&store, items).await.unwrap();
         assert_eq!(frame, Frame::SimpleString("OK".into()));
-        assert!(matches!(record, Record::MSet { items: ri } if ri == items));
         assert_eq!(
-            store.get(&Bytes::from_static(b"a")).await.unwrap().value,
+            store
+                .get(Bytes::from_static(b"a"))
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
             Bytes::from_static(b"1")
         );
         assert_eq!(
-            store.get(&Bytes::from_static(b"b")).await.unwrap().value,
+            store
+                .get(Bytes::from_static(b"b"))
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
             Bytes::from_static(b"2")
         );
     }

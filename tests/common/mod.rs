@@ -24,7 +24,7 @@ pub async fn spawn_server() -> Result<(u16, tokio::task::JoinHandle<Result<()>>)
 
     let handle = tokio::spawn(async move { server.run().await });
 
-    tokio::time::sleep(Duration::from_millis(50));
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     Ok((port, handle))
 }

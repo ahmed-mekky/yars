@@ -128,7 +128,8 @@ impl MemoryStore {
 
     pub fn del(&mut self, key: &Bytes) -> i64 {
         if let Some(entry) = self.map.remove(key) {
-            return self.free_memory(key.len() + entry.value.len()) as i64;
+            self.free_memory(key.len() + entry.value.len());
+            return 1;
         }
         0
     }
@@ -595,7 +596,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let k = Bytes::from_static(b"k");
         let resolved = store.setnx(k.clone(), entry(b"v", Expiry::None));
-        assert!(!resolved);
+        assert!(resolved);
     }
 
     #[tokio::test]
@@ -604,7 +605,7 @@ mod tests {
         let k = Bytes::from_static(b"k");
         store.set(k.clone(), entry(b"old", Expiry::None));
         let resolved = store.setnx(k, entry(b"new", Expiry::None));
-        assert!(resolved);
+        assert!(!resolved);
     }
 
     #[test]

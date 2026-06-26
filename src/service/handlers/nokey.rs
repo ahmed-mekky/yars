@@ -114,15 +114,11 @@ pub async fn config_rewrite(config: &Arc<RwLock<AppConfig>>) -> Result<Frame> {
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::handlers::tests::{read_frame, write_frame};
-    use crate::store::persistence::record::Record;
-    use crate::store::{
-        memory::MemoryStore,
-        types::{Entry, Expiry},
-    };
+    use crate::service::handlers::tests::{entry, spawn_test_store};
+    use crate::store::types::Expiry;
 
     fn make_config() -> Arc<RwLock<AppConfig>> {
         Arc::new(RwLock::new(AppConfig {
@@ -134,56 +130,45 @@ mod tests {
         }))
     }
 
-    #[tokio::test]
-    async fn ping_returns_pong() {
-        let frame = read_frame(ping().await);
+    #[test]
+    fn ping_returns_pong() {
+        let frame = ping().unwrap();
         assert_eq!(frame, Frame::SimpleString("PONG".into()));
     }
 
-    #[tokio::test]
-    async fn echo_returns_bulk_string() {
-        let frame = read_frame(echo(Bytes::from_static(b"hello")).await);
+    #[test]
+    fn echo_returns_bulk_string() {
+        let frame = echo(Bytes::from_static(b"hello")).unwrap();
         assert_eq!(frame, Frame::BulkString("hello".into()));
     }
 
     #[tokio::test]
     async fn dbsize_returns_count() {
-        let store = MemoryStore::new();
+        let store = spawn_test_store();
         store
-            .set(
-                Bytes::from_static(b"k"),
-                Entry {
-                    value: Bytes::from_static(b"v"),
-                    exp: Expiry::None,
-                },
-            )
-            .await;
-        let frame = read_frame(dbsize(&store).await);
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await
+            .unwrap();
+        let frame = dbsize(&store).await.unwrap();
         assert_eq!(frame, Frame::Integer(1));
     }
 
     #[tokio::test]
     async fn flushdb_returns_one() {
-        let store = MemoryStore::new();
+        let store = spawn_test_store();
         store
-            .set(
-                Bytes::from_static(b"k"),
-                Entry {
-                    value: Bytes::from_static(b"v"),
-                    exp: Expiry::None,
-                },
-            )
-            .await;
-        let (frame, record) = write_frame(flushdb(&store).await);
+            .set(Bytes::from_static(b"k"), entry(b"v", Expiry::None))
+            .await
+            .unwrap();
+        let frame = flushdb(&store).await.unwrap();
         assert_eq!(frame, Frame::Integer(1));
-        assert!(matches!(record, Record::FlushDb));
-        assert!(store.is_empty().await);
+        assert_eq!(store.len().await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn info_contains_expected_fields() {
-        let store = MemoryStore::new();
-        let frame = read_frame(info(&store).await);
+        let store = spawn_test_store();
+        let frame = info(&store).await.unwrap();
         let Frame::BulkString(data) = frame else {
             panic!("expected bulk string")
         };
@@ -198,7 +183,7 @@ mod tests {
     #[tokio::test]
     async fn config_get_star_returns_all() {
         let config = make_config();
-        let frame = read_frame(config_get(&config, Bytes::from_static(b"*")).await);
+        let frame = config_get(&config, Bytes::from_static(b"*")).await.unwrap();
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
@@ -208,7 +193,9 @@ mod tests {
     #[tokio::test]
     async fn config_get_specific_key() {
         let config = make_config();
-        let frame = read_frame(config_get(&config, Bytes::from_static(b"appendonly")).await);
+        let frame = config_get(&config, Bytes::from_static(b"appendonly"))
+            .await
+            .unwrap();
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
@@ -220,7 +207,9 @@ mod tests {
     #[tokio::test]
     async fn config_get_unknown_returns_empty() {
         let config = make_config();
-        let frame = read_frame(config_get(&config, Bytes::from_static(b"unknown")).await);
+        let frame = config_get(&config, Bytes::from_static(b"unknown"))
+            .await
+            .unwrap();
         let Frame::Array(items) = frame else {
             panic!("expected array")
         };
@@ -230,17 +219,15 @@ mod tests {
     #[tokio::test]
     async fn config_set_fsync_mode_ok() {
         let config = make_config();
-        let aof: Arc<dyn crate::store::persistence::aof::Aof> =
-            Arc::new(crate::store::persistence::aof::NoopAof);
-        let frame = read_frame(
-            config_set(
-                &config,
-                &aof,
-                Bytes::from_static(b"appendfsync"),
-                Bytes::from_static(b"no"),
-            )
-            .await,
-        );
+        let store = spawn_test_store();
+        let frame = config_set(
+            &config,
+            &store,
+            Bytes::from_static(b"appendfsync"),
+            Bytes::from_static(b"no"),
+        )
+        .await
+        .unwrap();
         assert_eq!(frame, Frame::SimpleString("OK".into()));
         let cfg = config.read().await;
         assert!(matches!(cfg.fsync_mode, crate::config::FsyncMode::No));
@@ -249,17 +236,15 @@ mod tests {
     #[tokio::test]
     async fn config_set_appendonly_ok() {
         let config = make_config();
-        let aof: Arc<dyn crate::store::persistence::aof::Aof> =
-            Arc::new(crate::store::persistence::aof::NoopAof);
-        let frame = read_frame(
-            config_set(
-                &config,
-                &aof,
-                Bytes::from_static(b"appendonly"),
-                Bytes::from_static(b"false"),
-            )
-            .await,
-        );
+        let store = spawn_test_store();
+        let frame = config_set(
+            &config,
+            &store,
+            Bytes::from_static(b"appendonly"),
+            Bytes::from_static(b"false"),
+        )
+        .await
+        .unwrap();
         assert_eq!(frame, Frame::SimpleString("OK".into()));
         assert!(!config.read().await.append_only);
     }
@@ -267,17 +252,14 @@ mod tests {
     #[tokio::test]
     async fn config_set_unknown_returns_error() {
         let config = make_config();
-        let aof: Arc<dyn crate::store::persistence::aof::Aof> =
-            Arc::new(crate::store::persistence::aof::NoopAof);
-        let frame = read_frame(
-            config_set(
-                &config,
-                &aof,
-                Bytes::from_static(b"unknown"),
-                Bytes::from_static(b"v"),
-            )
-            .await,
-        );
-        assert!(matches!(frame, Frame::Error(_)));
+        let store = spawn_test_store();
+        let result = config_set(
+            &config,
+            &store,
+            Bytes::from_static(b"unknown"),
+            Bytes::from_static(b"v"),
+        )
+        .await;
+        assert!(result.is_err());
     }
 }
