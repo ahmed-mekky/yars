@@ -45,12 +45,19 @@ impl MemoryStore {
     }
 
     pub fn add_memory(&mut self, new_memory: usize) {
-        self.total_memory += new_memory;
+        self.total_memory = self.total_memory.saturating_add(new_memory);
     }
 
-    pub fn free_memory(&mut self, freed_memory: usize) -> usize {
-        self.total_memory -= freed_memory;
-        freed_memory
+    pub fn update_memory(&mut self, new: usize, old: usize) {
+        if new >= old {
+            self.total_memory = self.total_memory.saturating_add(new - old);
+        } else {
+            self.total_memory = self.total_memory.saturating_sub(old - new);
+        }
+    }
+
+    pub fn free_memory(&mut self, freed_memory: usize) {
+        self.total_memory = self.total_memory.saturating_sub(freed_memory);
     }
 
     pub fn clear_memory(&mut self) {
@@ -96,7 +103,7 @@ impl MemoryStore {
             .unwrap_or(0);
 
         let new_memory = key.len() + entry.value.len();
-        self.add_memory(new_memory - old_memory);
+        self.update_memory(new_memory, old_memory);
 
         let existing_exp = self
             .map
@@ -150,7 +157,6 @@ impl MemoryStore {
     }
 
     pub fn mset(&mut self, items: &[(Bytes, Bytes)]) {
-        let mut added_memory: usize = 0;
         for (key, value) in items {
             let old_memory = self
                 .map
@@ -158,7 +164,7 @@ impl MemoryStore {
                 .map(|e| key.len() + e.value.len())
                 .unwrap_or(0);
             let new_memory = key.len() + value.len();
-            added_memory += new_memory - old_memory;
+            self.update_memory(new_memory, old_memory);
 
             self.map.insert(
                 key.clone(),
@@ -168,7 +174,6 @@ impl MemoryStore {
                 },
             );
         }
-        self.add_memory(added_memory);
     }
 
     pub fn clear(&mut self) {
