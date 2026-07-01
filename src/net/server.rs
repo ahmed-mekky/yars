@@ -23,7 +23,7 @@ impl Server {
     }
 
     pub async fn run(self) -> Result<()> {
-        self.ctx.aof.replay_into(&self.ctx.store).await?;
+        self.ctx.store.replay().await?;
 
         let result = tokio::select! {
             res = self.accept_loop() => res,
@@ -33,7 +33,7 @@ impl Server {
             }
         };
 
-        self.ctx.aof.shutdown().await;
+        self.ctx.store.shutdown().await?;
         result
     }
 

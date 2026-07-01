@@ -1,50 +1,17 @@
-use crate::{
-    protocol::resp::Frame,
-    store::{
-        persistence::record::Record,
-        types::{Entry, Expiry},
-    },
-};
-use tokio_util::bytes::Bytes;
-
 pub mod multikey;
 pub mod nokey;
 pub mod singlekey;
 
-pub enum CommandEffect {
-    Read(Frame),
-    Write(Frame, Record),
-}
-
-impl CommandEffect {
-    pub fn from_set(frame: Frame, key: Bytes, entry: Entry) -> Self {
-        let exp_ms = match entry.exp {
-            Expiry::At(ms) => Some(ms),
-            Expiry::None | Expiry::Keep => None,
-        };
-        Self::Write(
-            frame,
-            Record::Set {
-                key,
-                value: entry.value,
-                exp_ms,
-            },
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use tokio_util::bytes::Bytes;
-
-    use crate::{
-        protocol::resp::Frame,
-        service::handlers::CommandEffect,
-        store::{
-            persistence::record::Record,
-            types::{Entry, Expiry},
-        },
+    use crate::store::{
+        actor::StoreActor,
+        handle::StoreHandle,
+        memory::MemoryStore,
+        persistence::aof::Aof,
+        types::{Entry, Expiry},
     };
+    use tokio_util::bytes::Bytes;
 
     pub fn entry(value: &[u8], exp: Expiry) -> Entry {
         Entry {
@@ -53,17 +20,8 @@ mod tests {
         }
     }
 
-    pub fn read_frame(effect: CommandEffect) -> Frame {
-        match effect {
-            CommandEffect::Read(frame) => frame,
-            CommandEffect::Write(frame, _) => panic!("expected read, got write: {frame:?}"),
-        }
-    }
-
-    pub fn write_frame(effect: CommandEffect) -> (Frame, Record) {
-        match effect {
-            CommandEffect::Write(frame, record) => (frame, record),
-            CommandEffect::Read(frame) => panic!("expected write, got read: {frame:?}"),
-        }
+    pub fn spawn_test_store() -> StoreHandle {
+        let (handle, _) = StoreActor::spawn(MemoryStore::new(), Aof::Noop, 100);
+        handle
     }
 }

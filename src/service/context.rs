@@ -2,83 +2,49 @@ use crate::{
     config::AppConfig,
     protocol::{command::Command, resp::Frame},
     service::handlers::{
-        CommandEffect,
         multikey::{del, exists, mget, mset},
         nokey::{config_get, config_rewrite, config_set, dbsize, echo, flushdb, info, ping},
         singlekey::{
-            append, decr, expire, get, getdel, getset, incr, persist, pttl, set, setnx, strlen, ttl,
+            append, decr, expire, get, getdel, getset, incr, persist, pexpire, pttl, set, setnx,
+            strlen, ttl,
         },
     },
-    store::{
-        memory::MemoryStore,
-        persistence::{
-            AofEngine,
-            aof::{Aof, NoopAof},
-        },
-    },
+    store::{actor::StoreActor, handle::StoreHandle, memory::MemoryStore, persistence::aof::Aof},
     utils::time::get_current_millis,
 };
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 pub struct ServerContext {
-    pub store: MemoryStore,
+    pub store: StoreHandle,
     pub config: Arc<RwLock<AppConfig>>,
-    pub aof: Arc<dyn Aof>,
     pub cancel: CancellationToken,
 }
 
 impl ServerContext {
     pub async fn new(config: AppConfig) -> anyhow::Result<Arc<Self>> {
         let store = MemoryStore::new();
-        let aof: Arc<dyn Aof> = if config.append_only {
-            let engine = AofEngine::open(config.aof_path.clone(), config.fsync_mode).await?;
-            Arc::new(engine)
-        } else {
-            Arc::new(NoopAof)
-        };
+        let aof = Aof::new(&config).await?;
+        let (store_handle, _actor_task) = StoreActor::spawn(store, aof, 10024);
         Ok(Arc::new(Self {
-            store,
+            store: store_handle,
             config: Arc::new(RwLock::new(config)),
-            aof,
             cancel: CancellationToken::new(),
         }))
     }
 
-    pub async fn execute(&self, cmd: Command) -> Frame {
-        let effect = self.dispatch(&cmd).await;
-        match effect {
-            CommandEffect::Read(frame) => {
-                if !matches!(frame, Frame::Error(_)) {
-                    self.store.increment_commands();
-                }
-                frame
-            }
-            CommandEffect::Write(frame, record) => {
-                if !matches!(frame, Frame::Error(_)) {
-                    self.store.increment_commands();
-                    if let Err(err) = self.aof.append(record).await {
-                        eprintln!("AOF write error: {err:?}");
-                    }
-                }
-                frame
-            }
-        }
-    }
-
-    async fn dispatch(&self, cmd: &Command) -> CommandEffect {
+    pub async fn execute(&self, cmd: &Command) -> Result<Frame> {
         let store = &self.store;
-        let config = &self.config;
-        let aof = &self.aof;
         match cmd {
-            Command::PING => ping().await,
-            Command::CONFIG_GET { pattern } => config_get(config, pattern.clone()).await,
+            Command::PING => ping(),
+            Command::CONFIG_GET { pattern } => config_get(&self.config, pattern.clone()).await,
             Command::CONFIG_SET { key, value } => {
-                config_set(config, aof, key.clone(), value.clone()).await
+                config_set(&self.config, store, key.clone(), value.clone()).await
             }
-            Command::CONFIG_REWRITE => config_rewrite(config).await,
-            Command::ECHO { msg } => echo(msg.clone()).await,
+            Command::CONFIG_REWRITE => config_rewrite(&self.config).await,
+            Command::ECHO { msg } => echo(msg.clone()),
             Command::DBSIZE => dbsize(store).await,
             Command::FLUSHDB => flushdb(store).await,
             Command::INFO => info(store).await,
@@ -98,7 +64,7 @@ impl ServerContext {
                 expire(store, key.clone(), *ttl, get_current_millis()).await
             }
             Command::PEXPIRE { key, ttl } => {
-                expire(store, key.clone(), *ttl, get_current_millis()).await
+                pexpire(store, key.clone(), *ttl, get_current_millis()).await
             }
             Command::DEL { keys } => del(store, keys.clone()).await,
             Command::EXISTS { keys } => exists(store, keys.clone()).await,
