@@ -135,10 +135,13 @@ impl StoreActor {
                 self.store.clear();
                 ActorResult::Write(StoreResponse::Clear, Record::FlushDb)
             }
-            StoreRequest::GetDel(key) => ActorResult::Write(
-                StoreResponse::GetDel(self.store.getdel(&key)),
-                Record::Del { keys: vec![key] },
-            ),
+            StoreRequest::GetDel(key) => match self.store.getdel(&key) {
+                Some(entry) => ActorResult::Write(
+                    StoreResponse::GetDel(Some(entry)),
+                    Record::Del { keys: vec![key] },
+                ),
+                None => ActorResult::Read(StoreResponse::GetDel(None)),
+            },
             StoreRequest::GetSet(key, entry) => {
                 let (old, resolved) = self.store.getset(key.clone(), entry.clone());
                 ActorResult::Write(StoreResponse::GetSet(old), to_set_record(key, resolved))
@@ -212,7 +215,7 @@ impl StoreActor {
             }
             StoreRequest::Replay => {
                 if let Err(e) = self.aof.replay(&mut self.store).await {
-                    ActorResult::Read(StoreResponse::Error(e))
+                    ActorResult::Error(e)
                 } else {
                     ActorResult::Read(StoreResponse::Replay)
                 }
