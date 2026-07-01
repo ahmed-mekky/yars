@@ -98,7 +98,6 @@ impl MemoryStore {
         let old_memory = self
             .map
             .get(&key)
-            .filter(|current| !current.is_expired(get_current_millis()))
             .map(|e| key.len() + e.value.len())
             .unwrap_or(0);
 
@@ -128,8 +127,12 @@ impl MemoryStore {
                 _ => {}
             }
         }
-
-        self.map.remove(key);
+        let freed_memory = self
+            .map
+            .remove(key)
+            .map(|e| key.len() + e.value.len())
+            .unwrap_or(0);
+        self.free_memory(freed_memory);
         None
     }
 
