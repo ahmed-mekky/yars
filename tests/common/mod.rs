@@ -17,6 +17,7 @@ pub async fn spawn_server() -> Result<(u16, tokio::task::JoinHandle<Result<()>>)
         fsync_mode: FsyncMode::No,
         config_path: tmp.path().join("yars.toml"),
         data_dir: tmp.path().to_path_buf(),
+        num_shards: 16,
     };
 
     let server = Server::bind("127.0.0.1:0", config).await?;

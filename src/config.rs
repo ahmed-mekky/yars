@@ -43,6 +43,7 @@ pub struct AppConfig {
     pub fsync_mode: FsyncMode,
     pub config_path: PathBuf,
     pub data_dir: PathBuf,
+    pub num_shards: u8,
 }
 
 const CONFIG_HEADER: &str = "\
@@ -57,6 +58,10 @@ fn default_aof_filename() -> String {
     String::from("data.aof")
 }
 
+fn default_num_shards() -> u8 {
+    16
+}
+
 #[derive(Deserialize, Serialize)]
 struct TomlConfig {
     #[serde(default = "default_append_only")]
@@ -65,6 +70,8 @@ struct TomlConfig {
     append_filename: String,
     #[serde(default)]
     fsync_mode: FsyncMode,
+    #[serde(default = "default_num_shards")]
+    num_shards: u8,
 }
 
 impl Default for TomlConfig {
@@ -73,6 +80,7 @@ impl Default for TomlConfig {
             append_only: default_append_only(),
             append_filename: default_aof_filename(),
             fsync_mode: FsyncMode::default(),
+            num_shards: default_num_shards(),
         }
     }
 }
@@ -115,6 +123,7 @@ impl AppConfig {
         let mut append_only = file_vals.append_only;
         let mut aof_filename = file_vals.append_filename;
         let mut fsync_mode = file_vals.fsync_mode;
+        let mut num_shards = file_vals.num_shards;
 
         if let Ok(v) = std::env::var("YARS_APPEND_ONLY") {
             append_only = v.parse().unwrap_or(append_only);
@@ -127,6 +136,9 @@ impl AppConfig {
         {
             fsync_mode = mode;
         }
+        if let Ok(v) = std::env::var("YARS_NUM_SHARDS") {
+            num_shards = v.parse().unwrap_or(num_shards);
+        }
 
         let aof_path = yars_data_dir.join(&aof_filename);
 
@@ -136,6 +148,7 @@ impl AppConfig {
             fsync_mode,
             config_path,
             data_dir: yars_data_dir,
+            num_shards,
         })
     }
 
@@ -258,6 +271,7 @@ mod tests {
             fsync_mode: FsyncMode::Always,
             config_path: PathBuf::from("/tmp/c.toml"),
             data_dir: PathBuf::from("/tmp"),
+            num_shards: 16,
         };
         cfg.set_fsync_mode("no").unwrap();
         assert_eq!(cfg.fsync_mode, FsyncMode::No);
@@ -271,6 +285,7 @@ mod tests {
             fsync_mode: FsyncMode::Always,
             config_path: PathBuf::from("/tmp/c.toml"),
             data_dir: PathBuf::from("/tmp"),
+            num_shards: 16,
         };
         assert!(cfg.set_fsync_mode("invalid").is_err());
     }
@@ -306,6 +321,7 @@ mod tests {
             fsync_mode: FsyncMode::No,
             config_path: config_path.clone(),
             data_dir: dir.path().to_path_buf(),
+            num_shards: 16,
         };
         cfg.write_to_file().unwrap();
         assert!(config_path.exists());

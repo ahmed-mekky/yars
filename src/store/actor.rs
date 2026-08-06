@@ -5,8 +5,7 @@ use tokio_util::bytes::Bytes;
 use crate::{
     config::FsyncMode,
     store::{
-        handle::StoreHandle,
-        memory::MemoryStore,
+        memory::{MemoryStore, ServerInfo},
         persistence::{aof::Aof, record::Record},
         types::{Entry, Expiry},
     },
@@ -62,7 +61,7 @@ pub enum StoreResponse {
     Error(anyhow::Error),
     Ttl(i64),
     Pttl(i64),
-    Info(String),
+    Info(ServerInfo),
     SetFsyncMode,
     Shutdown,
     Replay,
@@ -93,11 +92,11 @@ impl StoreActor {
         store: MemoryStore,
         aof: Aof,
         buffer: usize,
-    ) -> (StoreHandle, tokio::task::JoinHandle<()>) {
+    ) -> (mpsc::Sender<StoreMessage>, tokio::task::JoinHandle<()>) {
         let (tx, rx) = mpsc::channel(buffer);
         let actor = StoreActor::new(store, aof, rx);
         let handle = tokio::spawn(actor.run());
-        (StoreHandle::new(tx), handle)
+        (tx, handle)
     }
 
     pub async fn run(mut self) {

@@ -51,6 +51,10 @@ pub async fn config_get(config: &Arc<RwLock<AppConfig>>, pattern: Bytes) -> Resu
         values.push(Frame::BulkString("appendfsync".into()));
         values.push(Frame::BulkString(config.fsync_mode.as_str().into()));
     }
+    if pattern == "*" || pattern == "numshards" {
+        values.push(Frame::BulkString("numshards".into()));
+        values.push(Frame::BulkString(config.num_shards.to_string().into()));
+    }
 
     Ok(Frame::Array(values))
 }
@@ -102,6 +106,7 @@ pub async fn config_set(
                 Ok(Frame::SimpleString("OK".into()))
             }
         }
+        "numshards" => Err(anyhow!("ERR numshards cannot be changed at runtime")),
         _ => Err(anyhow!("ERR unknown configuration option")),
     }
 }
@@ -127,6 +132,7 @@ mod tests {
             fsync_mode: crate::config::FsyncMode::EverySec,
             config_path: std::path::PathBuf::from("/tmp/test.toml"),
             data_dir: std::path::PathBuf::from("/tmp"),
+            num_shards: 16,
         }))
     }
 

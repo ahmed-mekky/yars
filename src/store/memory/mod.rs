@@ -1,3 +1,3 @@
 mod engine;
 
-pub use engine::MemoryStore;
+pub use engine::{MemoryStore, ServerInfo};

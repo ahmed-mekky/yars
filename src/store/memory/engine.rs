@@ -16,6 +16,14 @@ pub struct MemoryStore {
     total_memory: usize,
 }
 
+#[derive(Default)]
+pub struct ServerInfo {
+    pub key_count: usize,
+    pub used_memory: usize,
+    pub uptime_seconds: u64,
+    pub total_commands: u64,
+}
+
 impl Default for MemoryStore {
     fn default() -> Self {
         Self::new()
@@ -76,20 +84,18 @@ impl MemoryStore {
         self.map.is_empty()
     }
 
-    pub fn info(&self) -> String {
-        let key_count = self.len() as i64;
+    pub fn info(&self) -> ServerInfo {
+        let key_count = self.len();
         let used_memory = self.used_memory();
         let uptime_seconds = self.uptime_seconds();
         let total_commands = self.total_commands();
 
-        format!(
-            "yars_version:{}\r\ndb_keys:{}\r\nused_memory:{}\r\nuptime_seconds:{}\r\ntotal_commands:{}\r\n",
-            env!("CARGO_PKG_VERSION"),
+        ServerInfo {
             key_count,
             used_memory,
             uptime_seconds,
-            total_commands
-        )
+            total_commands,
+        }
     }
 }
 

@@ -21,7 +21,13 @@ mod tests {
     }
 
     pub fn spawn_test_store() -> StoreHandle {
-        let (handle, _) = StoreActor::spawn(MemoryStore::new(), Aof::Noop, 100);
-        handle
+        let senders: Vec<_> = (0..16)
+            .map(|_| {
+                let store = MemoryStore::new();
+                let (tx, _handle) = StoreActor::spawn(store, Aof::Noop, 100);
+                tx
+            })
+            .collect();
+        StoreHandle::new(senders)
     }
 }
