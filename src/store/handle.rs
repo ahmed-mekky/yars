@@ -19,7 +19,6 @@ pub struct StoreHandle {
 impl StoreHandle {
     pub fn new(shards: Vec<mpsc::Sender<StoreMessage>>) -> Self {
         let num_shards = shards.len() as u8;
-        dbg!(num_shards);
         Self { shards, num_shards }
     }
 
@@ -328,12 +327,12 @@ impl StoreHandle {
             })
             .collect();
 
-        let info = ServerInfo::default();
+        let mut info = ServerInfo::default();
         for fut in futs {
-            match fut.await? {
-                Ok(Ok(StoreResponse::Info(_info))) => (),
+            info += match fut.await? {
+                Ok(Ok(StoreResponse::Info(info))) => info,
                 _ => return Err(anyhow::anyhow!("shard error")),
-            }
+            };
         }
         Ok(format!(
             "yars_version:{}\r\ndb_keys:{}\r\nused_memory:{}\r\nuptime_seconds:{}\r\ntotal_commands:{}\r\n",
@@ -359,7 +358,7 @@ impl StoreHandle {
             let fut = tokio::spawn(async move {
                 let _ = tx
                     .send(StoreMessage {
-                        request: StoreRequest::Del(group_keys),
+                        request: StoreRequest::Exists(group_keys),
                         respond_to: reply_tx,
                     })
                     .await;
@@ -371,7 +370,7 @@ impl StoreHandle {
         let mut total = 0i64;
         for fut in futs {
             match fut.await? {
-                Ok(Ok(StoreResponse::Del(count))) => total += count,
+                Ok(Ok(StoreResponse::Exists(count))) => total += count,
                 _ => return Err(anyhow::anyhow!("shard error")),
             }
         }

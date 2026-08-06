@@ -21,21 +21,18 @@ pub struct ServerContext {
     pub store: StoreHandle,
     pub config: Arc<RwLock<AppConfig>>,
     pub cancel: CancellationToken,
-    actor_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl ServerContext {
     pub async fn new(config: AppConfig) -> anyhow::Result<Arc<Self>> {
         let num_shards = config.num_shards;
         let mut senders = Vec::with_capacity(num_shards.into());
-        let mut actor_handles = Vec::with_capacity(num_shards.into());
 
         for _ in 0..num_shards {
             let store = MemoryStore::new();
             let aof = Aof::new(&config).await?;
-            let (tx, task) = StoreActor::spawn(store, aof, 1024);
+            let (tx, _) = StoreActor::spawn(store, aof, 1024);
             senders.push(tx);
-            actor_handles.push(task);
         }
 
         let store_handle = StoreHandle::new(senders);
@@ -44,7 +41,6 @@ impl ServerContext {
             store: store_handle,
             config: Arc::new(RwLock::new(config)),
             cancel: CancellationToken::new(),
-            actor_handles,
         }))
     }
 

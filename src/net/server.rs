@@ -28,6 +28,7 @@ impl Server {
         let result = tokio::select! {
             res = self.accept_loop() => res,
             _ = self.ctx.cancel.cancelled() => {
+
                 println!("Shutting down...");
                 Ok(())
             }

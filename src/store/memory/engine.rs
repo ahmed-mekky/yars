@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::time::Instant;
+use std::{collections::HashMap, ops::AddAssign};
 
 use anyhow::{Context, Result};
 use tokio_util::bytes::Bytes;
@@ -22,6 +22,15 @@ pub struct ServerInfo {
     pub used_memory: usize,
     pub uptime_seconds: u64,
     pub total_commands: u64,
+}
+
+impl AddAssign for ServerInfo {
+    fn add_assign(&mut self, rhs: Self) {
+        self.key_count += rhs.key_count;
+        self.used_memory += rhs.used_memory;
+        self.total_commands += rhs.total_commands;
+        self.uptime_seconds = rhs.uptime_seconds;
+    }
 }
 
 impl Default for MemoryStore {
